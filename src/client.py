@@ -2,8 +2,6 @@ import asyncio
 import json
 import httpx
 
-from cache import CacheManager
-
 BASE_URL = "https://www.alliancegenome.org/api"
 
 class AsyncAGRClient:
@@ -11,45 +9,21 @@ class AsyncAGRClient:
         self,
         base_url: str = BASE_URL,
         timeout: float = 60.0,
-        max_concurrent: int = 5,
-        cache: CacheManager | None = None,
+        max_concurrent: int = 5
     ):
         self._client = httpx.AsyncClient(base_url=base_url, timeout=timeout)
         self._sem = asyncio.Semaphore(max_concurrent)
-        self._cache = cache
+
+    async def get_data(self, path: str, params: dict | None = None) -> str:
+        async with self._sem:
+            result = await self._client.get(path, params=params)
+            result.raise_for_status()
+
+        return result.text
 
     async def get_json(self, path: str, params: dict | None = None) -> dict:
-        if self._cache:
-            cached = self._cache.get_file(path, params)
-            if cached is not None:
-                print(f"Cache hit for {path} with params {params}")
-                return json.loads(cached)
-
-        async with self._sem:
-            r = await self._client.get(path, params=params)
-            r.raise_for_status()
-            data = r.json()
-
-        if self._cache:
-            self._cache.set_file(path, params, json.dumps(data))
-
-        return data
-
-    async def get_text(self, path: str, params: dict | None = None) -> str:
-        if self._cache:
-            cached = self._cache.get_file(path, params)
-            if cached is not None:
-                return cached
-
-        async with self._sem:
-            r = await self._client.get(path, params=params)
-            r.raise_for_status()
-            data = r.text
-
-        if self._cache:
-            self._cache.set_file(path, params, data)
-
-        return data
+        text = await self.get_data(path, params)
+        return json.loads(text)
 
     async def close(self):
         await self._client.aclose()

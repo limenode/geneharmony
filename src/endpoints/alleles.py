@@ -2,12 +2,13 @@ import asyncio
 import math
 import pandas as pd
 
+from utils import agr_endpoint
 from client import AsyncAGRClient
 from models import RawAllele, Allele
 
 _PAGE_SIZE = 500
 
-
+@agr_endpoint("/gene/{gene_id}/alleles")
 async def get_alleles(
     gene_id: str,
     client: AsyncAGRClient,
