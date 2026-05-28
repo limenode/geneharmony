@@ -1,18 +1,18 @@
 import pandas as pd
 
-from client import AGRClient
+from client import AsyncAGRClient
 from models import RawOrtholog, Ortholog
 
-def get_orthologs(
+async def get_orthologs(
     gene_id: str,
-    client: AGRClient,
+    client: AsyncAGRClient,
     species: list[str] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     params = {}
     if species:
         params["species"] = ",".join(species)
-    
-    data = client.get(f"/gene/{gene_id}/orthologs", params=params)
+
+    data = await client.get_json(f"/gene/{gene_id}/orthologs", params=params)
     results = data["results"] if "results" in data else []
 
     raw_records = []

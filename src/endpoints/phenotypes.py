@@ -1,18 +1,18 @@
 import pandas as pd
 
-from client import AGRClient
+from client import AsyncAGRClient
 from models import RawPhenotype, Phenotype
 
-def get_phenotypes(
+async def get_phenotypes(
     gene_id: str,
-    client: AGRClient,
+    client: AsyncAGRClient,
     species: list[str] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     params = {}
     if species:
         params["species"] = ",".join(species)
-    
-    data = client.get(f"/gene/{gene_id}/phenotypes", params=params)
+
+    data = await client.get_json(f"/gene/{gene_id}/phenotypes", params=params)
     results = data["results"] if "results" in data else []
 
     raw_records = []

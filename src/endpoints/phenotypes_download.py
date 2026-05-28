@@ -1,22 +1,20 @@
 import io
 import pandas as pd
 
-from client import AGRClient
+from client import AsyncAGRClient
 
-def get_phenotypes_download(
+async def get_phenotypes_download(
     gene_id: str,
-    client: AGRClient,
+    client: AsyncAGRClient,
     species: list[str] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     params = {}
     if species:
         params["species"] = ",".join(species)
-    
-    data = client.get_text(f"/gene/{gene_id}/phenotypes/download", params=params)
+
+    data = await client.get_text(f"/gene/{gene_id}/phenotypes/download", params=params)
 
     raw_df = pd.read_csv(io.StringIO(data), sep="\t")
-
-    # Get unique combinations of "Phenotype", "Genetic Entity ID", "Genetic Entity Name", and "Genetic Entity Type"
     processed_df = raw_df[["Phenotype", "Genetic Entity ID", "Genetic Entity Name", "Genetic Entity Type"]].drop_duplicates()
     
     return processed_df, raw_df

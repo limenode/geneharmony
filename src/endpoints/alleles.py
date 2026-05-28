@@ -1,34 +1,42 @@
+import asyncio
+import math
 import pandas as pd
 
-from client import AGRClient
+from client import AsyncAGRClient
 from models import RawAllele, Allele
 
 _PAGE_SIZE = 500
 
 
-def get_alleles(
+async def get_alleles(
     gene_id: str,
-    client: AGRClient,
+    client: AsyncAGRClient,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
+    # Fetch page 1 first for total count
+    first_page = await client.get_json(
+        f"/gene/{gene_id}/alleles",
+        params={"limit": _PAGE_SIZE, "page": 1},
+    )
+    total = first_page.get("total", 0)
+    num_pages = math.ceil(total / _PAGE_SIZE)
+
+    if num_pages > 1:
+        remaining = await asyncio.gather(*[
+            client.get_json(
+                f"/gene/{gene_id}/alleles",
+                params={"limit": _PAGE_SIZE, "page": p},
+            )
+            for p in range(2, num_pages + 1)
+        ])
+    else:
+        remaining = []
+
     raw_records = []
     processed_records = []
-    page = 1
-
-    while True:
-        data = client.get(
-            f"/gene/{gene_id}/alleles",
-            params={"limit": _PAGE_SIZE, "page": page},
-        )
-        results = data.get("results", [])
-        total = data.get("total", 0)
-
-        for result in results:
+    for page_data in [first_page, *remaining]:
+        for result in page_data.get("results", []):
             raw_records.append(RawAllele(**result).model_dump())
             processed_records.append(_process_allele(result).model_dump())
-
-        if not results or len(raw_records) >= total:
-            break
-        page += 1
 
     return pd.DataFrame(processed_records), pd.DataFrame(raw_records)
 

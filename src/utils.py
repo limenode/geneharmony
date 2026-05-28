@@ -1,17 +1,18 @@
-from client import AGRClient
-
-from typing import Callable
+import asyncio
 import pandas as pd
+from typing import Callable, Coroutine, Any
 
-def query_gene_list(
-    function: Callable[[str, AGRClient], tuple[pd.DataFrame, pd.DataFrame]],
+from client import AsyncAGRClient
+
+async def async_query_gene_list(
+    function: Callable[[str, AsyncAGRClient], Coroutine[Any, Any, tuple[pd.DataFrame, pd.DataFrame]]],
     gene_ids: list[str],
-    client: AGRClient,
-) -> pd.DataFrame:
-    results = []
-    raw_results = []
-    for gene_id in gene_ids:
-        processed_df, raw_df = function(gene_id, client)
-        results.append(processed_df)
-        raw_results.append(raw_df)
-    return pd.concat(results, ignore_index=True), pd.concat(raw_results, ignore_index=True)
+    client: AsyncAGRClient,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    results = await asyncio.gather(*[function(gene_id, client) for gene_id in gene_ids])
+
+    processed_dfs, raw_dfs = zip(*results)
+    return (
+        pd.concat(processed_dfs, ignore_index=True),
+        pd.concat(raw_dfs, ignore_index=True),
+    )
