@@ -1,4 +1,3 @@
-import json
 from pathlib import Path
 
 # Default cache root sits at the project root (one level above src/), keeping
@@ -21,25 +20,14 @@ class CacheManager:
             filename = "response" + suffix
 
         return self.cache_dir.joinpath(*segments) / filename
-
-    def get_json(self, api_path: str, params: dict | None) -> dict | None:
-        p = self._path(api_path, params, ".json")
-        if p.exists():
-            return json.loads(p.read_text())
-        return None
-
-    def set_json(self, api_path: str, params: dict | None, data: dict) -> None:
-        p = self._path(api_path, params, ".json")
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(json.dumps(data))
-
-    def get_text(self, api_path: str, params: dict | None) -> str | None:
-        p = self._path(api_path, params, ".tsv")
+    
+    def get_file(self, api_path: str, params: dict | None) -> str | None:
+        p = self._path(api_path, params, ".cache")
         if p.exists():
             return p.read_text()
         return None
 
-    def set_text(self, api_path: str, params: dict | None, data: str) -> None:
-        p = self._path(api_path, params, ".tsv")
+    def set_file(self, api_path: str, params: dict | None, data: str) -> None:
+        p = self._path(api_path, params, ".cache")
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(data)

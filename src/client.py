@@ -1,4 +1,5 @@
 import asyncio
+import json
 import httpx
 
 from cache import CacheManager
@@ -19,9 +20,10 @@ class AsyncAGRClient:
 
     async def get_json(self, path: str, params: dict | None = None) -> dict:
         if self._cache:
-            cached = self._cache.get_json(path, params)
+            cached = self._cache.get_file(path, params)
             if cached is not None:
-                return cached
+                print(f"Cache hit for {path} with params {params}")
+                return json.loads(cached)
 
         async with self._sem:
             r = await self._client.get(path, params=params)
@@ -29,13 +31,13 @@ class AsyncAGRClient:
             data = r.json()
 
         if self._cache:
-            self._cache.set_json(path, params, data)
+            self._cache.set_file(path, params, json.dumps(data))
 
         return data
 
     async def get_text(self, path: str, params: dict | None = None) -> str:
         if self._cache:
-            cached = self._cache.get_text(path, params)
+            cached = self._cache.get_file(path, params)
             if cached is not None:
                 return cached
 
@@ -45,7 +47,7 @@ class AsyncAGRClient:
             data = r.text
 
         if self._cache:
-            self._cache.set_text(path, params, data)
+            self._cache.set_file(path, params, data)
 
         return data
 
