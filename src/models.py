@@ -30,16 +30,16 @@ class Phenotype(BaseModel):
     phenotypeStatement: str
 
 class RawAllele(BaseModel):
-    category: str
-    searchable: bool
-    allele: dict
-    geneIds: List[str]
+    category: Optional[str] = None
+    searchable: bool = False
+    allele: dict = {}
+    geneIds: List[str] = []
     symbol: Optional[str] = None
-    alterationType: str
-    alterationTypeSortOrder: int
-    hasPhenotype: bool
-    hasDisease: bool
-    variantList: List[dict]
+    alterationType: Optional[str] = None
+    alterationTypeSortOrder: Optional[int] = None
+    hasPhenotype: bool = False
+    hasDisease: bool = False
+    variantList: List[dict] = []
 
 class Allele(BaseModel):
     allele_id: str
