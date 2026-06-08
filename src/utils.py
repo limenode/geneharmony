@@ -1,11 +1,38 @@
 import asyncio
 import os
+import shutil
 import pandas as pd
 from concurrent.futures import ThreadPoolExecutor
 
 from client import AsyncAGRClient
 from cache import CacheManager
 from endpoints.base import Endpoint
+
+
+def resolve_gene_normalizer() -> str:
+    """Locate the gene_normalizer binary.
+
+    Resolution order:
+      1. GENE_NORMALIZER_BIN env var (explicit override, e.g. from .env)
+      2. PATH lookup via shutil.which
+
+    Raises FileNotFoundError with an actionable message if it cannot be found.
+    """
+    override = os.environ.get("GENE_NORMALIZER_BIN")
+    if override:
+        if not (os.path.isfile(override) and os.access(override, os.X_OK)):
+            raise FileNotFoundError(
+                f"GENE_NORMALIZER_BIN={override!r} is not an executable file"
+            )
+        return override
+
+    found = shutil.which("gene_normalizer")
+    if found is None:
+        raise FileNotFoundError(
+            "gene_normalizer not found. Set GENE_NORMALIZER_BIN in your .env "
+            "(see .env.example) or put gene_normalizer on PATH."
+        )
+    return found
 
 async def query_gene_ids(
     function: Endpoint,

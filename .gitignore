@@ -13,3 +13,6 @@ cache/
 
 # test files
 test.txt
+
+# environment variables
+.env
