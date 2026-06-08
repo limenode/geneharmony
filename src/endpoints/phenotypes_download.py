@@ -1,7 +1,7 @@
 import io
 import pandas as pd
 
-from utils import agr_endpoint
+from endpoints import agr_endpoint
 from client import AsyncAGRClient
 
 @agr_endpoint("/gene/{gene_id}/phenotypes/download")

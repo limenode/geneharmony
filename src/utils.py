@@ -2,34 +2,19 @@ import asyncio
 import os
 import pandas as pd
 from concurrent.futures import ThreadPoolExecutor
-from typing import Callable, Coroutine, Any
 
 from client import AsyncAGRClient
 from cache import CacheManager
-
-def agr_endpoint(url: str):
-    """Attach a URL template to an endpoint function.
-
-    Usage:
-        @agr_endpoint("/gene/{gene_id}/alleles")
-        async def get_alleles(gene_id, client): ...
-
-        get_alleles.__url__                               # "/gene/{gene_id}/alleles"
-        get_alleles.__url__.format(gene_id="HGNC:1100")  # "/gene/HGNC:1100/alleles"
-    """
-    def decorator(func):
-        func.__url__ = url
-        return func
-    return decorator
+from endpoints.base import Endpoint
 
 async def query_gene_ids(
-    function: Callable[[str, AsyncAGRClient], Coroutine[Any, Any, tuple[pd.DataFrame, pd.DataFrame]]],
+    function: Endpoint,
     cache: CacheManager,
     gene_ids: list[str],
     client: AsyncAGRClient,
     load_raw: bool = False,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    url_template: str = function.__url__
+    url_template: str = function.url_template
 
     cached_ids   = [gid for gid in gene_ids if cache.has_dataframes(url_template.format(gene_id=gid))]
     uncached_ids = [gid for gid in gene_ids if gid not in set(cached_ids)]
