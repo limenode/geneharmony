@@ -8,6 +8,8 @@ from client import AsyncAGRClient
 from cache import CacheManager
 from endpoints.base import Endpoint
 
+import subprocess
+
 
 def resolve_gene_normalizer() -> str:
     """Locate the gene_normalizer binary.
@@ -33,6 +35,29 @@ def resolve_gene_normalizer() -> str:
             "(see .env.example) or put gene_normalizer on PATH."
         )
     return found
+
+def normalize_symbols(symbols: list[str], species: str = "") -> list[str]:
+    joined_symbols = "\n".join(symbols)
+    
+    command = [resolve_gene_normalizer(), "--no-echo", "--id-only"]
+    if species:
+        command.extend(["--species", species])
+    
+    try:
+        result = subprocess.run(
+            command,
+            input=joined_symbols,
+            text=True,
+            capture_output=True,
+            check=True,
+        )
+        normalized = result.stdout.strip().splitlines()
+        normalized = list(filter(None, (s.strip() for s in normalized)))
+        return normalized
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError(
+            f"gene_normalizer failed with exit code {e.returncode}: {e.stderr}"
+        ) from e
 
 async def query_gene_ids(
     function: Endpoint,
@@ -60,6 +85,9 @@ async def query_gene_ids(
                 for gid in cached_ids
             ])
         all_results.extend(cached_results)
+
+    for gid in uncached_ids:
+        print(f"Gene ID {gid} not found in cache. Fetching from API...")
 
     # Step 2b — fetch uncached genes: async HTTP requests, bounded by the client semaphore.
     if uncached_ids:

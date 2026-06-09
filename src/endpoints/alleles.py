@@ -2,7 +2,7 @@ import asyncio
 import math
 import pandas as pd
 
-from endpoints import agr_endpoint
+from endpoints.base import agr_endpoint
 from client import AsyncAGRClient
 from models import RawAllele, Allele
 

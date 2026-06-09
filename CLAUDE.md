@@ -20,12 +20,12 @@ pixi run jupyter lab src/pipeline_nb.ipynb     # open the driver notebook
 
 ## Required external setup
 
-- **`gene_normalizer`** — an external binary (not in this repo) that maps gene symbols to IDs. It's resolved by `resolve_gene_normalizer()` in this order: `GENE_NORMALIZER_BIN` env var, then `PATH`.
+- **`gene_normalizer`** — an external binary (not in this repo) that maps gene symbols to IDs. It's resolved by `resolve_gene_normalizer()` in this order: `GENE_NORMALIZER_BIN` env var, then `PATH`. `normalize_symbols(symbols, species="")` in `utils.py` is the high-level wrapper the notebook uses: it pipes the symbols into the binary (`--no-echo --id-only`) and returns the gene IDs as a list, with surrounding whitespace stripped and blank lines dropped. It raises `RuntimeError` if the binary exits non-zero.
 - **`.env`** at the repo root (see `.env.example`) supplies `GENE_NORMALIZER_BIN`. The notebook loads it via `find_dotenv()` because its cwd is `src/`, not the repo root.
 
 ## Architecture
 
-The data flow is: **gene symbols → `gene_normalizer` → gene IDs → endpoint fetch → (processed_df, raw_df) → filesystem cache**.
+The data flow is: **gene symbols → `normalize_symbols` (`gene_normalizer`) → gene IDs → endpoint fetch → (processed_df, raw_df) → filesystem cache**.
 
 ### The dual-DataFrame contract
 
@@ -37,7 +37,9 @@ Every endpoint and every cache entry deals in a `(processed_df, raw_df)` tuple:
 
 ### Endpoints (`src/endpoints/`)
 
-Each endpoint is an `async` function decorated with `@agr_endpoint("/gene/{gene_id}/...")` (`base.py`). The decorator attaches a `url_template` attribute to the function; this template is the single source of truth for both the HTTP path **and** the cache key. Adding an endpoint means: write the async function, decorate it with its URL template, return `(processed_df, raw_df)`. `phenotypes_download` is the odd one out — it parses a TSV download rather than JSON.
+Each endpoint is an `async` function decorated with `@agr_endpoint("/gene/{gene_id}/...")` (`base.py`). The decorator attaches a `url_template` attribute to the function; this template is the single source of truth for both the HTTP path **and** the cache key. Adding an endpoint means: write the async function in its own module, decorate it with its URL template, return `(processed_df, raw_df)`, and re-export it from `endpoints/__init__.py` (add it to `__all__`). `phenotypes_download` is the odd one out — it parses a TSV download rather than JSON.
+
+Endpoint modules import the decorator from the leaf module (`from endpoints.base import agr_endpoint`), **not** from the package (`from endpoints import ...`); the package `__init__` imports the endpoint modules, so importing back through it would be circular. Callers (notebook, `utils`) get endpoints from the package: `from endpoints import get_orthologs, ...`.
 
 ### Client (`src/client.py`)
 

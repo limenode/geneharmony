@@ -1,6 +1,6 @@
 import pandas as pd
 
-from endpoints import agr_endpoint
+from endpoints.base import agr_endpoint
 from client import AsyncAGRClient
 from models import RawPhenotype, Phenotype
 
@@ -10,7 +10,7 @@ async def get_phenotypes(
     client: AsyncAGRClient,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     data = await client.get_json(f"/gene/{gene_id}/phenotypes")
-    results = data["results"] if "results" in data else []
+    results = data.get("results", [])
 
     raw_records = []
     processed_records = []

@@ -1,6 +1,6 @@
 import pandas as pd
 
-from endpoints import agr_endpoint
+from endpoints.base import agr_endpoint
 from client import AsyncAGRClient
 from models import RawOrtholog, Ortholog
 
@@ -11,7 +11,7 @@ async def get_orthologs(
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
 
     data = await client.get_json(f"/gene/{gene_id}/orthologs")
-    results = data["results"] if "results" in data else []
+    results = data.get("results", [])
 
     raw_records = []
     processed_records = []
@@ -22,9 +22,9 @@ async def get_orthologs(
         gtg_orthology = result.get("geneToGeneOrthologyGenerated", {})
         processed_records.append(
             Ortholog(
-                subject_id=gtg_orthology.get("subjectGene", "").get("primaryExternalId", ""),
-                object_id=gtg_orthology.get("objectGene", "").get("primaryExternalId", ""),
-                confidence=gtg_orthology.get("confidence", "").get("name", ""),
+                subject_id=gtg_orthology.get("subjectGene", {}).get("primaryExternalId", ""),
+                object_id=gtg_orthology.get("objectGene", {}).get("primaryExternalId", ""),
+                confidence=gtg_orthology.get("confidence", {}).get("name", ""),
             ).model_dump()
         )
 
