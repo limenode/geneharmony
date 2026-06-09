@@ -11,19 +11,11 @@ import pandas as pd
 
 _DEFAULT_CACHE_DIR = Path(__file__).parent.parent / "cache"
 
-# Bump when the on-disk shape of a cache entry changes, so stale entries can be
-# detected and refetched rather than silently misread.
+# Bump when the on-disk shape of a cache entry changes
 _CACHE_VERSION = 1
 
-
 def _atomic_write(path: Path, write_fn: Callable[[Path], None]) -> None:
-    """Write ``path`` via a temp file in the same dir, then atomic rename.
-
-    A crash mid-write leaves only the discarded temp file behind; the real
-    ``path`` is never partially written, so ``has_dataframes`` can't mistake a
-    truncated file for a complete cache hit. The temp file shares ``path``'s
-    directory so ``os.replace`` stays on one filesystem (where it's atomic).
-    """
+    """Write ``path`` via a temp file in the same dir, then rename."""
     fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
     os.close(fd)
     tmp = Path(tmp_name)
@@ -54,12 +46,14 @@ class CacheManager:
         return self._path(api_path, params, ".cache").exists()
 
     def _df_dir(self, url: str) -> Path:
+        """Convert a URL path into the directory where its cache files are stored."""
         return self.cache_dir.joinpath(*url.strip("/").split("/"))
 
     def has_dataframes(self, url: str) -> bool:
         return (self._df_dir(url) / "processed.parquet").exists()
 
     def get_dataframes(self, url: str, load_raw: bool = False) -> tuple[pd.DataFrame, pd.DataFrame]:
+        """Load the processed and raw DataFrames for a URL from cache. Raises if not present."""
         d = self._df_dir(url)
         processed_df = pd.read_parquet(d / "processed.parquet")
         if load_raw:
@@ -79,6 +73,7 @@ class CacheManager:
     def set_dataframes(
         self, url: str, processed_df: pd.DataFrame, raw_df: pd.DataFrame
     ) -> None:
+        """Persist the processed and raw DataFrames for a URL to cache, along with sidecar metadata."""
         d = self._df_dir(url)
         d.mkdir(parents=True, exist_ok=True)
 
@@ -88,6 +83,12 @@ class CacheManager:
             with gzip.open(p, "wb") as f:
                 pickle.dump(raw_df, f)
 
+        def _write_meta(p: Path) -> None:
+            p.write_text(json.dumps(meta, indent=2))
+
+        def _write_processed(p: Path) -> None:
+            processed_df.to_parquet(p, compression="zstd", index=False)
+
         meta = {
             "cached_at": datetime.now(timezone.utc).isoformat(),
             "cache_version": _CACHE_VERSION,
@@ -95,12 +96,6 @@ class CacheManager:
             "raw_rows": int(len(raw_df)),
         }
 
-        # Write the dependents first and processed.parquet last: has_dataframes
-        # keys off processed.parquet, so once it appears the raw + meta files are
-        # already in place and the entry is guaranteed complete.
         _atomic_write(d / "raw.pkl.gz", _write_raw)
-        _atomic_write(d / "meta.json", lambda p: p.write_text(json.dumps(meta, indent=2)))
-        _atomic_write(
-            d / "processed.parquet",
-            lambda p: processed_df.to_parquet(p, compression="zstd", index=False),
-        )
+        _atomic_write(d / "meta.json", _write_meta)
+        _atomic_write(d / "processed.parquet", _write_processed)

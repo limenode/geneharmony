@@ -8,7 +8,7 @@ class AsyncAGRClient:
     def __init__(
         self,
         base_url: str = BASE_URL,
-        timeout: float = 60.0,
+        timeout: float = 90.0,
         max_concurrent: int = 5
     ):
         self._client = httpx.AsyncClient(base_url=base_url, timeout=timeout)

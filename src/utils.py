@@ -48,9 +48,7 @@ async def query_gene_ids(
 
     all_results: list[tuple[pd.DataFrame, pd.DataFrame]] = []
 
-    # Step 2a — load cached genes: plain file reads, parallelised across all cores.
-    # The lambda captures gid by default argument to avoid the loop closure pitfall,
-    # and forwards load_raw so the pickle read can be skipped when not needed.
+    # Step 2a — load cached genes
     if cached_ids:
         loop = asyncio.get_running_loop()
         with ThreadPoolExecutor(max_workers=os.cpu_count()) as executor:
