@@ -1,10 +1,38 @@
 import gzip
+import json
+import os
 import pickle
+import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Callable
 
 import pandas as pd
 
 _DEFAULT_CACHE_DIR = Path(__file__).parent.parent / "cache"
+
+# Bump when the on-disk shape of a cache entry changes, so stale entries can be
+# detected and refetched rather than silently misread.
+_CACHE_VERSION = 1
+
+
+def _atomic_write(path: Path, write_fn: Callable[[Path], None]) -> None:
+    """Write ``path`` via a temp file in the same dir, then atomic rename.
+
+    A crash mid-write leaves only the discarded temp file behind; the real
+    ``path`` is never partially written, so ``has_dataframes`` can't mistake a
+    truncated file for a complete cache hit. The temp file shares ``path``'s
+    directory so ``os.replace`` stays on one filesystem (where it's atomic).
+    """
+    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    os.close(fd)
+    tmp = Path(tmp_name)
+    try:
+        write_fn(tmp)
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
 
 class CacheManager:
     def __init__(self, cache_dir: str | Path = _DEFAULT_CACHE_DIR):
@@ -41,16 +69,38 @@ class CacheManager:
             raw_df = pd.DataFrame()
         return processed_df, raw_df
 
+    def get_meta(self, url: str) -> dict | None:
+        """Return the sidecar metadata for an entry, or None if absent."""
+        meta_path = self._df_dir(url) / "meta.json"
+        if not meta_path.exists():
+            return None
+        return json.loads(meta_path.read_text())
+
     def set_dataframes(
         self, url: str, processed_df: pd.DataFrame, raw_df: pd.DataFrame
     ) -> None:
         d = self._df_dir(url)
         d.mkdir(parents=True, exist_ok=True)
 
-        # Parquet for processed DataFrames
-        processed_df.to_parquet(d / "processed.parquet", compression="zstd", index=False)
-        
         # Raw DataFrames contain nested dicts/lists (object dtype) that Parquet
         # cannot represent natively, so pickle + gzip is used instead.
-        with gzip.open(d / "raw.pkl.gz", "wb") as f:
-            pickle.dump(raw_df, f)
+        def _write_raw(p: Path) -> None:
+            with gzip.open(p, "wb") as f:
+                pickle.dump(raw_df, f)
+
+        meta = {
+            "cached_at": datetime.now(timezone.utc).isoformat(),
+            "cache_version": _CACHE_VERSION,
+            "processed_rows": int(len(processed_df)),
+            "raw_rows": int(len(raw_df)),
+        }
+
+        # Write the dependents first and processed.parquet last: has_dataframes
+        # keys off processed.parquet, so once it appears the raw + meta files are
+        # already in place and the entry is guaranteed complete.
+        _atomic_write(d / "raw.pkl.gz", _write_raw)
+        _atomic_write(d / "meta.json", lambda p: p.write_text(json.dumps(meta, indent=2)))
+        _atomic_write(
+            d / "processed.parquet",
+            lambda p: processed_df.to_parquet(p, compression="zstd", index=False),
+        )
