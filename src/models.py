@@ -10,7 +10,7 @@ class RawOrtholog(BaseModel):
     geneToGeneOrthologyGenerated: dict
 
 class Ortholog(BaseModel):
-    subject_id: str
+    gene_id: str
     object_id: str
     confidence: str
 
@@ -26,7 +26,7 @@ class RawPhenotype(BaseModel):
     pubmedPubModIDs: List[str]
 
 class Phenotype(BaseModel):
-    subject_id: str
+    gene_id: str
     phenotypeStatement: str
 
 class RawAllele(BaseModel):
@@ -42,6 +42,7 @@ class RawAllele(BaseModel):
     variantList: List[dict] = []
 
 class Allele(BaseModel):
+    gene_id: str
     allele_id: str
     symbol: Optional[str] = None
     alteration_type: str

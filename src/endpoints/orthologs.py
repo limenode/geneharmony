@@ -22,7 +22,7 @@ async def get_orthologs(
         gtg_orthology = result.get("geneToGeneOrthologyGenerated", {})
         processed_records.append(
             Ortholog(
-                subject_id=gtg_orthology.get("subjectGene", {}).get("primaryExternalId", ""),
+                gene_id=gene_id,
                 object_id=gtg_orthology.get("objectGene", {}).get("primaryExternalId", ""),
                 confidence=gtg_orthology.get("confidence", {}).get("name", ""),
             ).model_dump()

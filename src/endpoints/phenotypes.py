@@ -19,7 +19,7 @@ async def get_phenotypes(
         raw_records.append(RawPhenotype(**result).model_dump())
         processed_records.append(
             Phenotype(
-                subject_id=result.get("subject", {}).get("primaryExternalId", ""),
+                gene_id=gene_id,
                 phenotypeStatement=result.get("phenotypeStatement", ""),
             ).model_dump()
         )

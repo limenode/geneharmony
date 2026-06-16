@@ -37,12 +37,12 @@ async def get_alleles(
     for page_data in [first_page, *remaining]:
         for result in page_data.get("results", []):
             raw_records.append(RawAllele(**result).model_dump())
-            processed_records.append(_process_allele(result).model_dump())
+            processed_records.append(_process_allele(gene_id, result).model_dump())
 
     return pd.DataFrame(processed_records), pd.DataFrame(raw_records)
 
 
-def _process_allele(result: dict) -> Allele:
+def _process_allele(input_gene_id: str, result: dict) -> Allele:
     variant_list = result.get("variantList") or []
     variant = variant_list[0] if variant_list else {}
 
@@ -58,6 +58,7 @@ def _process_allele(result: dict) -> Allele:
     )
 
     return Allele(
+        gene_id=input_gene_id,
         allele_id=result.get("allele", {}).get("curie", ""),
         symbol=result.get("symbol", ""),
         alteration_type=result.get("alterationType", ""),

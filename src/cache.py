@@ -12,7 +12,7 @@ import pandas as pd
 _DEFAULT_CACHE_DIR = Path(__file__).parent.parent / "cache"
 
 # Bump when the on-disk shape of a cache entry changes
-_CACHE_VERSION = 1
+_CACHE_VERSION = 2
 
 def _atomic_write(path: Path, write_fn: Callable[[Path], None]) -> None:
     """Write ``path`` via a temp file in the same dir, then rename."""
@@ -50,7 +50,14 @@ class CacheManager:
         return self.cache_dir.joinpath(*url.strip("/").split("/"))
 
     def has_dataframes(self, url: str) -> bool:
-        return (self._df_dir(url) / "processed.parquet").exists()
+        # An entry only counts as a hit if its completed parquet exists *and* it
+        # was written by the current cache version. A version mismatch (or a
+        # missing meta.json) is treated as a miss so callers re-fetch and
+        # overwrite the stale entry, rather than concatenating incompatible schemas.
+        if not (self._df_dir(url) / "processed.parquet").exists():
+            return False
+        meta = self.get_meta(url)
+        return bool(meta) and meta.get("cache_version") == _CACHE_VERSION
 
     def get_dataframes(self, url: str, load_raw: bool = False) -> tuple[pd.DataFrame, pd.DataFrame]:
         """Load the processed and raw DataFrames for a URL from cache. Raises if not present."""
@@ -99,3 +106,26 @@ class CacheManager:
         _atomic_write(d / "raw.pkl.gz", _write_raw)
         _atomic_write(d / "meta.json", _write_meta)
         _atomic_write(d / "processed.parquet", _write_processed)
+    
+    def set_annotation(self, name: str, df: pd.DataFrame) -> None:
+        """Persist an annotation DataFrame to cache."""
+        d = self.cache_dir / "external"
+        d.mkdir(parents=True, exist_ok=True)
+
+        def _write(p: Path) -> None:
+            df.to_parquet(p, compression="zstd", index=False)
+
+        _atomic_write(d / f"{name}.parquet", _write)
+    
+    def get_annotation(self, name: str) -> pd.DataFrame:
+        """Load an annotation DataFrame from cache. Raises if not present."""
+        return pd.read_parquet(self.cache_dir / "external" / f"{name}.parquet")
+
+    def list_annotations(self) -> list[str]:
+        """List the names of all cached annotations."""
+        d = self.cache_dir / "external"
+        if not d.exists():
+            return []
+        return [p.stem for p in d.glob("*.parquet")]
+
+    

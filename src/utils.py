@@ -3,6 +3,7 @@ import os
 import shutil
 import pandas as pd
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 from client import AsyncAGRClient
 from cache import CacheManager
@@ -59,6 +60,44 @@ def normalize_symbols(symbols: list[str], species: str = "") -> list[str]:
             f"gene_normalizer failed with exit code {e.returncode}: {e.stderr}"
         ) from e
 
+def normalize_symbols_map(symbols: list[str], species: str = "") -> dict[str, str]:
+    """Map each input symbol to its normalized gene ID.
+
+    The binary emits one line per input line (blank when a symbol can't be resolved),
+    so the output stays positionally 1:1 with the input.
+
+    Raises RuntimeError if the binary exits non-zero, or if the line count does
+    not match the input (i.e. the 1:1 assumption is violated, e.g. a symbol
+    resolving to multiple IDs) — failing loudly beats silently misaligning rows.
+    """
+    joined_symbols = "\n".join(symbols)
+
+    command = [resolve_gene_normalizer(), "--no-echo", "--id-only"]
+    if species:
+        command.extend(["--species", species])
+
+    try:
+        result = subprocess.run(
+            command,
+            input=joined_symbols,
+            text=True,
+            capture_output=True,
+            check=True,
+        )
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError(
+            f"gene_normalizer failed with exit code {e.returncode}: {e.stderr}"
+        ) from e
+
+    lines = result.stdout.splitlines()
+    if len(lines) != len(symbols):
+        raise RuntimeError(
+            f"gene_normalizer returned {len(lines)} lines for {len(symbols)} "
+            "input symbols; cannot align symbol -> id mapping by position."
+        )
+
+    return {sym: gid.strip() for sym, gid in zip(symbols, lines) if gid.strip()}
+
 async def query_gene_ids(
     function: Endpoint,
     cache: CacheManager,
@@ -104,3 +143,127 @@ async def query_gene_ids(
         pd.concat(processed_dfs, ignore_index=True),
         pd.concat(raw_dfs, ignore_index=True) if load_raw else pd.DataFrame(),
     )
+
+
+# Canonical gene-ID column name used inside every stored annotation set.
+_ANNOTATION_GENE_ID = "gene_id"
+
+def _read_annotation_table(path: str | Path) -> pd.DataFrame:
+    """Read a flat annotation file, dispatching on its extension."""
+    suffix = Path(path).suffix.lower()
+    if suffix == ".parquet":
+        return pd.read_parquet(path)
+    if suffix in (".tsv", ".tab", ".txt"):
+        return pd.read_csv(path, sep="\t")
+    if suffix == ".csv":
+        return pd.read_csv(path)
+    raise ValueError(
+        f"Unsupported annotation file type {suffix!r} for {path!r} "
+        "(expected .csv, .tsv/.tab/.txt, or .parquet)."
+    )
+
+
+def ingest_annotation(
+    cache: CacheManager,
+    source: str | Path | pd.DataFrame,
+    annotation_name: str,
+    gene_id_column: str,
+    species: str = "",
+    normalize: bool = True,
+) -> dict:
+    """Injest a gene annotation table into the cache, keyed by ``annotation_name``.
+
+    Args:
+        cache (CacheManager): cache to store the annotation DataFrame in_
+        source (str | Path | pd.DataFrame): either a path to a flat file (CSV, TSV, or Parquet) or a DataFrame in memory
+        annotation_name (str): the name to store the annotation under in the cache; used for later retrieval and joining
+        gene_id_column (str): the column name containing the gene IDs in the source data
+        species (str, optional): the species for which to normalize gene IDs. Defaults to "".
+        normalize (bool, optional): whether to normalize gene IDs. Defaults to True.
+
+    Raises:
+        KeyError: if the specified gene ID column is not found in the source data
+        ValueError: if there is a collision with an existing gene ID column
+
+    Returns:
+        dict: a summary of the ingestion process (rows in/stored/dropped, columns)
+    """
+    df = source.copy() if isinstance(source, pd.DataFrame) else _read_annotation_table(source)
+
+    if gene_id_column not in df.columns:
+        raise KeyError(
+            f"gene_id_column {gene_id_column!r} not found; columns are {list(df.columns)}"
+        )
+    if gene_id_column != _ANNOTATION_GENE_ID and _ANNOTATION_GENE_ID in df.columns:
+        raise ValueError(
+            f"input already has a {_ANNOTATION_GENE_ID!r} column distinct from "
+            f"{gene_id_column!r}; rename it to avoid a collision."
+        )
+
+    df = df.rename(columns={gene_id_column: _ANNOTATION_GENE_ID})
+
+    rows_in = len(df)
+    rows_dropped = 0
+    if normalize:
+        symbols = df[_ANNOTATION_GENE_ID].astype(str).tolist()
+        # Map only the unique symbols, then broadcast back across all rows.
+        unique_symbols = list(dict.fromkeys(symbols))
+        mapping = normalize_symbols_map(unique_symbols, species=species)
+        df[_ANNOTATION_GENE_ID] = df[_ANNOTATION_GENE_ID].astype(str).map(mapping)
+        unmapped = df[_ANNOTATION_GENE_ID].isna()
+        rows_dropped = int(unmapped.sum())
+        df = df[~unmapped].reset_index(drop=True)
+
+    cache.set_annotation(annotation_name, df)
+
+    return {
+        "annotation_name": annotation_name,
+        "rows_in": rows_in,
+        "rows_stored": len(df),
+        "rows_dropped_unmapped": rows_dropped,
+        "columns": [c for c in df.columns if c != _ANNOTATION_GENE_ID],
+        "normalized": normalize,
+    }
+
+
+def query_annotations(
+    cache: CacheManager,
+    annotation_name: str,
+    gene_ids: list[str],
+) -> pd.DataFrame:
+    """Return the rows of an annotation set whose gene_id is in ``gene_ids``."""
+    df = cache.get_annotation(annotation_name)
+    return df[df[_ANNOTATION_GENE_ID].isin(set(gene_ids))].reset_index(drop=True)
+
+
+def annotate(
+    agr_df: pd.DataFrame,
+    cache: CacheManager,
+    annotation_names: str | list[str],
+    gene_id_col: str = _ANNOTATION_GENE_ID,
+) -> pd.DataFrame:
+    """Left-join one or more annotation sets onto an AGR processed DataFrame.
+
+    Joins on ``agr_df[gene_id_col]`` against each set's ``gene_id``.
+    """
+    if isinstance(annotation_names, str):
+        annotation_names = [annotation_names]
+    if gene_id_col not in agr_df.columns:
+        raise KeyError(
+            f"gene_id_col {gene_id_col!r} not found; columns are {list(agr_df.columns)}"
+        )
+
+    out = agr_df.copy()
+    for name in annotation_names:
+        ann = cache.get_annotation(name)
+        ann = ann.rename(
+            columns={c: f"{name}.{c}" for c in ann.columns if c != _ANNOTATION_GENE_ID}
+        )
+        out = out.merge(
+            ann, how="left", left_on=gene_id_col, right_on=_ANNOTATION_GENE_ID
+        )
+        # When joining on a differently-named column, drop the duplicate key the
+        # merge pulled in from the annotation side.
+        if gene_id_col != _ANNOTATION_GENE_ID:
+            out = out.drop(columns=[_ANNOTATION_GENE_ID])
+    return out

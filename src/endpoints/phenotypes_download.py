@@ -13,6 +13,8 @@ async def get_phenotypes_download(
 
     raw_df = pd.read_csv(io.StringIO(data), sep="\t")
     processed_df = raw_df[["Phenotype", "Genetic Entity ID", "Genetic Entity Name", "Genetic Entity Type"]].drop_duplicates()
-    
+    # Stamp the queried gene so this output is joinable like every other endpoint.
+    processed_df = processed_df.assign(gene_id=gene_id)
+
     return processed_df, raw_df
 
