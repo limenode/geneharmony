@@ -128,14 +128,29 @@ async def query_gene_ids(
     for gid in uncached_ids:
         print(f"Gene ID {gid} not found in cache. Fetching from API...")
 
-    # Step 2b — fetch uncached genes: async HTTP requests, bounded by the client semaphore.
+    # Step 2b — fetch uncached genes: async HTTP requests, bounded by the client
+    # semaphore. Each gene's fetch and its cache write are bundled into one
+    # coroutine so a finished gene is persisted immediately, instead of waiting
+    # at a gather() barrier for the slowest request before any write starts.
+    # set_dataframes is blocking disk I/O, so it's offloaded to a thread to keep
+    # it from stalling the event loop (and the other in-flight fetches).
     if uncached_ids:
+        loop = asyncio.get_running_loop()
+
+        async def _fetch_and_store(gid: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+            processed_df, raw_df = await function(gid, client)
+            await loop.run_in_executor(
+                None,
+                cache.set_dataframes,
+                url_template.format(gene_id=gid),
+                processed_df,
+                raw_df,
+            )
+            return processed_df, raw_df
+
         fetched_results = await asyncio.gather(*[
-            function(gid, client) for gid in uncached_ids
+            _fetch_and_store(gid) for gid in uncached_ids
         ])
-        # Step 3 — persist each result so future calls hit the cache.
-        for gid, (processed_df, raw_df) in zip(uncached_ids, fetched_results):
-            cache.set_dataframes(url_template.format(gene_id=gid), processed_df, raw_df)
         all_results.extend(fetched_results)
 
     processed_dfs, raw_dfs = zip(*all_results)
@@ -170,6 +185,7 @@ def ingest_annotation(
     gene_id_column: str,
     species: str = "",
     normalize: bool = True,
+    override: bool = False,
 ) -> dict:
     """Injest a gene annotation table into the cache, keyed by ``annotation_name``.
 
@@ -188,6 +204,18 @@ def ingest_annotation(
     Returns:
         dict: a summary of the ingestion process (rows in/stored/dropped, columns)
     """
+    
+    if cache.has_annotation(annotation_name) and not override:
+        print(f"Annotation {annotation_name!r} already exists in cache; skipping ingestion.")
+        return {
+            "annotation_name": annotation_name,
+            "rows_in": None,
+            "rows_stored": None,
+            "rows_dropped_unmapped": None,
+            "columns": None,
+            "normalized": None,
+        }
+    
     df = source.copy() if isinstance(source, pd.DataFrame) else _read_annotation_table(source)
 
     if gene_id_column not in df.columns:

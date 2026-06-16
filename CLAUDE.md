@@ -49,8 +49,8 @@ Endpoint modules import the decorator from the leaf module (`from endpoints.base
 
 A filesystem cache whose directory tree **mirrors the API path** — `cache/gene/{gene_id}/{endpoint}/`. Each entry holds three files:
 - `processed.parquet` (zstd) — columnar, dtype-preserving.
-- `raw.pkl.gz` — gzipped pickle, because raw records contain nested object-dtype columns Parquet can't represent natively.
-- `meta.json` — `cached_at`, `cache_version`, row counts (the hook for future TTL/invalidation).
+- `raw.parquet` (zstd) — also Parquet, but the nested dict/list columns are JSON-encoded to strings first (`_encode_nested_columns` classifies a column by its first non-null value). The encoded column names are recorded in `meta["raw_json_columns"]` so `get_dataframes(load_raw=True)` can `json.loads` them back into Python objects. This replaced an older `raw.pkl.gz` (gzipped pickle): Parquet+zstd decompresses in Arrow's C layer and **releases the GIL on read**, so raw loads are faster and the `ThreadPoolExecutor` fan-out in `utils.py` actually parallelizes — pickle held the GIL through deserialization and bottlenecked on one core.
+- `meta.json` — `cached_at`, `cache_version`, row counts, `raw_json_columns` (the hook for future TTL/invalidation).
 
 Writes go through `_atomic_write` (temp file in the same dir → `os.replace`), and `processed.parquet` is written **last** so its presence — which `has_dataframes` keys off — guarantees the whole entry is complete. Bump `_CACHE_VERSION` when the on-disk shape changes. The cache directory is gitignored.
 
@@ -58,6 +58,6 @@ Writes go through `_atomic_write` (temp file in the same dir → `os.replace`), 
 
 `query_gene_ids(endpoint_fn, cache, gene_ids, client, load_raw=False)` is the entry point that ties it together:
 1. Split `gene_ids` into cached vs uncached by checking `cache.has_dataframes(url_template.format(gene_id=...))`.
-2. Read cached entries in parallel across CPUs (`ThreadPoolExecutor` driven via `run_in_executor`) — plain file reads release the GIL.
+2. Read cached entries in parallel across CPUs (`ThreadPoolExecutor` driven via `run_in_executor`) — the Parquet reads decompress/decode in Arrow's C layer, which releases the GIL, so this genuinely scales across cores (this is why raw was moved off pickle — see the Cache section).
 3. Fetch uncached entries concurrently (bounded by the client semaphore), then persist each.
-4. `pd.concat` everything into one processed DataFrame (and raw, only when `load_raw=True` — otherwise the pickle read is skipped).
+4. `pd.concat` everything into one processed DataFrame (and raw, only when `load_raw=True` — otherwise the `raw.parquet` read is skipped entirely).

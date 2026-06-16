@@ -1,7 +1,5 @@
-import gzip
 import json
 import os
-import pickle
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12,7 +10,35 @@ import pandas as pd
 _DEFAULT_CACHE_DIR = Path(__file__).parent.parent / "cache"
 
 # Bump when the on-disk shape of a cache entry changes
-_CACHE_VERSION = 2
+_CACHE_VERSION = 3
+
+
+def _is_missing(v) -> bool:
+    """True for the null markers that show up in object columns (None / NaN)."""
+    return v is None or (isinstance(v, float) and pd.isna(v))
+
+
+def _encode_nested_columns(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
+    """JSON-encode any column whose values are dicts/lists so the frame fits in Parquet.
+
+    Returns the (possibly copied) frame plus the names of the encoded columns,
+    which the reader uses to JSON-decode them back into Python objects. Scalar
+    columns (str/bool/int) are left untouched. A column is classified by its
+    first non-null value, which is safe here because every row of a given Raw*
+    column comes from the same Pydantic model and so shares one shape.
+    """
+    nested_cols = [
+        col
+        for col in df.columns
+        if isinstance(next((v for v in df[col] if not _is_missing(v)), None), (dict, list))
+    ]
+    if not nested_cols:
+        return df, []
+
+    out = df.copy()
+    for col in nested_cols:
+        out[col] = [None if _is_missing(v) else json.dumps(v) for v in out[col]]
+    return out, nested_cols
 
 def _atomic_write(path: Path, write_fn: Callable[[Path], None]) -> None:
     """Write ``path`` via a temp file in the same dir, then rename."""
@@ -64,8 +90,11 @@ class CacheManager:
         d = self._df_dir(url)
         processed_df = pd.read_parquet(d / "processed.parquet")
         if load_raw:
-            with gzip.open(d / "raw.pkl.gz", "rb") as f:
-                raw_df = pickle.load(f)
+            raw_df = pd.read_parquet(d / "raw.parquet")
+            meta = self.get_meta(url) or {}
+            for col in meta.get("raw_json_columns", []):
+                if col in raw_df.columns:
+                    raw_df[col] = [None if _is_missing(v) else json.loads(v) for v in raw_df[col]]
         else:
             raw_df = pd.DataFrame()
         return processed_df, raw_df
@@ -84,11 +113,13 @@ class CacheManager:
         d = self._df_dir(url)
         d.mkdir(parents=True, exist_ok=True)
 
-        # Raw DataFrames contain nested dicts/lists (object dtype) that Parquet
-        # cannot represent natively, so pickle + gzip is used instead.
+        # Raw DataFrames carry nested dicts/lists (object dtype) that Parquet
+        # can't represent natively, so those columns are JSON-encoded to strings
+        # (tracked in meta["raw_json_columns"] for the reader).
+        raw_encoded, raw_json_columns = _encode_nested_columns(raw_df)
+
         def _write_raw(p: Path) -> None:
-            with gzip.open(p, "wb") as f:
-                pickle.dump(raw_df, f)
+            raw_encoded.to_parquet(p, compression="zstd", index=False)
 
         def _write_meta(p: Path) -> None:
             p.write_text(json.dumps(meta, indent=2))
@@ -101,9 +132,10 @@ class CacheManager:
             "cache_version": _CACHE_VERSION,
             "processed_rows": int(len(processed_df)),
             "raw_rows": int(len(raw_df)),
+            "raw_json_columns": raw_json_columns,
         }
 
-        _atomic_write(d / "raw.pkl.gz", _write_raw)
+        _atomic_write(d / "raw.parquet", _write_raw)
         _atomic_write(d / "meta.json", _write_meta)
         _atomic_write(d / "processed.parquet", _write_processed)
     
@@ -127,5 +159,9 @@ class CacheManager:
         if not d.exists():
             return []
         return [p.stem for p in d.glob("*.parquet")]
+
+    def has_annotation(self, name: str) -> bool:
+        """Check if an annotation with the given name exists in cache."""
+        return (self.cache_dir / "external" / f"{name}.parquet").exists()
 
     
