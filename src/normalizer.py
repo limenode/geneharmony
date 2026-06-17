@@ -173,11 +173,15 @@ def build_gene_index(records: pd.DataFrame) -> GeneIndex:
         for i, value in enumerate(records[column].tolist()):
             if isinstance(value, str):
                 for token in value.split("|"):
+                    if not token:
+                        continue
                     synonym.setdefault(token, []).append(i)
 
     for i, value in enumerate(records["GeneSecondaryIds"].tolist()):
         if isinstance(value, str):
             for token in value.split("|"):
+                if not token:
+                    continue
                 secondary.setdefault(token, []).append(i)
 
     exact: _Tables = {
