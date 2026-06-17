@@ -1,7 +1,21 @@
+from datetime import datetime
 from pydantic import BaseModel, PositiveInt
 from typing import Optional, List
 
-class RawOrtholog(BaseModel):
+class DownloadFile(BaseModel):
+    filename: str
+    s3Path: str
+    s3Url: str
+    stableURL: str
+    releaseVersion: str
+    size: PositiveInt
+    lastModified: datetime
+    dataType: str
+    fileType: str
+    dataSubType: str
+    fileExtension: str
+
+class In_Ortholog(BaseModel):
     category: str
     searchable: bool
     stringencyFilter: str
@@ -9,12 +23,12 @@ class RawOrtholog(BaseModel):
     geneAnnotationsMap: dict
     geneToGeneOrthologyGenerated: dict
 
-class Ortholog(BaseModel):
+class Out_Ortholog(BaseModel):
     gene_id: str
     object_id: str
     confidence: str
 
-class RawPhenotype(BaseModel):
+class In_Phenotype(BaseModel):
     subject: dict
     relation: dict
     primaryAnnotations: List[dict]
@@ -25,11 +39,11 @@ class RawPhenotype(BaseModel):
     references: List[dict]
     pubmedPubModIDs: List[str]
 
-class Phenotype(BaseModel):
+class Out_Phenotype(BaseModel):
     gene_id: str
     phenotypeStatement: str
 
-class RawAllele(BaseModel):
+class In_Allele(BaseModel):
     category: Optional[str] = None
     searchable: bool = False
     allele: dict = {}
@@ -41,7 +55,7 @@ class RawAllele(BaseModel):
     hasDisease: bool = False
     variantList: List[dict] = []
 
-class Allele(BaseModel):
+class Out_Allele(BaseModel):
     gene_id: str
     allele_id: str
     symbol: Optional[str] = None

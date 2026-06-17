@@ -1,0 +1,11 @@
+[
+  {"id": "NCBITaxon:9606", "species": "Homo sapiens", "common": ["human"]},
+  {"id": "NCBITaxon:10090", "species": "Mus musculus", "common": ["mouse"]},
+  {"id": "NCBITaxon:10116", "species": "Rattus norvegicus", "common": ["rat"]},
+  {"id": "NCBITaxon:7955", "species": "Danio rerio", "common": ["zebrafish"]},
+  {"id": "NCBITaxon:7227", "species": "Drosophila melanogaster", "common": ["fly", "fruit fly"]},
+  {"id": "NCBITaxon:6239", "species": "Caenorhabditis elegans", "common": ["worm", "roundworm"]},
+  {"id": "NCBITaxon:559292", "species": "Saccharomyces cerevisiae S288C", "common": ["yeast", "budding yeast", "saccharomyces cerevisiae"]},
+  {"id": "NCBITaxon:8355", "species": "Xenopus laevis", "common": ["african clawed frog"]},
+  {"id": "NCBITaxon:8364", "species": "Xenopus tropicalis", "common": ["western clawed frog", "tropical clawed frog"]}
+]

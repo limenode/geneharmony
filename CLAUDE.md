@@ -4,60 +4,88 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-An async Python wrapper around the [Alliance of Genome Resources](https://www.alliancegenome.org) (AGR) REST API. It takes gene symbols, resolves them to gene IDs, fetches orthologs / phenotypes / alleles concurrently, normalizes each response into tidy DataFrames, and caches results on disk. The pipeline is driven interactively from `src/pipeline_nb.ipynb`.
+An async Python wrapper around the [Alliance of Genome Resources](https://www.alliancegenome.org) (AGR) REST API and its bulk-download files. It resolves gene symbols/IDs to canonical genes with an in-memory index built from AGR's `GENE-TSV-COMBINED` bulk file, fetches API data concurrently, and downloads/parses bulk files. The pipeline is developed interactively in `src/notebook.ipynb`; `src/main.py` is the intended user-facing entry point.
+
+This replaces an earlier design (kept in `src_old/` for reference) that used an external Rust `gene_normalizer` binary and a filesystem cache of per-endpoint DataFrames. Gene normalization is now pure Python against the bulk file — there is **no external binary and no `.env`** to set up (`.env.example` is stale).
 
 ## Environment & commands
 
-Dependencies are managed with [pixi](https://pixi.sh) (conda-forge). There are **no defined tasks, tests, or linters** — `[tasks]` in `pixi.toml` is empty.
+Dependencies are managed with [pixi](https://pixi.sh) (conda-forge). There are **no defined tasks, tests, or linters** — `[tasks]` in `pixi.toml` is empty. Python is 3.14; deps include `httpx`, `pydantic` v2, `pandas` 3.x, `pyarrow`.
 
 ```bash
-pixi install                                   # create the environment from pixi.lock
-pixi run python <script>                       # run Python inside the env
-pixi run jupyter lab src/pipeline_nb.ipynb     # open the driver notebook
+pixi install                                # create the environment from pixi.lock
+pixi run python <script>                    # run Python inside the env
+pixi run jupyter lab src/notebook.ipynb     # open the driver notebook
 ```
 
-**Imports are flat** (`from client import ...`, `from endpoints import ...`) with no package prefix. Code therefore only resolves when **`src/` is the working directory / on `sys.path`**. Run scripts from inside `src/`; the notebook already runs there.
+**Imports are flat** (`from client import ...`, `from normalizer import ...`) with no package prefix, so code only resolves when **`src/` is the working directory / on `sys.path`**. The notebook runs there; standalone scripts must too (e.g. `sys.path.insert(0, "src")`).
 
-## Required external setup
+## Conventions
 
-- **`gene_normalizer`** — an external binary (not in this repo) that maps gene symbols to IDs. It's resolved by `resolve_gene_normalizer()` in this order: `GENE_NORMALIZER_BIN` env var, then `PATH`. `normalize_symbols(symbols, species="")` in `utils.py` is the high-level wrapper the notebook uses: it pipes the symbols into the binary (`--no-echo --id-only`) and returns the gene IDs as a list, with surrounding whitespace stripped and blank lines dropped. It raises `RuntimeError` if the binary exits non-zero.
-- **`.env`** at the repo root (see `.env.example`) supplies `GENE_NORMALIZER_BIN`. The notebook loads it via `find_dotenv()` because its cwd is `src/`, not the repo root.
+The owner prefers **strong typing** (modern `type` aliases, `Final`, `Self`, `enum`, `NamedTuple`) and **minimal comments** — comments are for user-facing docstrings or genuinely non-obvious logic, not narration. Match this when editing.
 
 ## Architecture
 
-The data flow is: **gene symbols → `normalize_symbols` (`gene_normalizer`) → gene IDs → endpoint fetch → (processed_df, raw_df) → filesystem cache**.
+Two AGR hosts are in play, and keeping them separate matters:
+- **API host** `https://www.alliancegenome.org/api` — JSON endpoints, served by `AGRClient`.
+- **Download host** `https://download.alliancegenome.org` — large bulk files, served by `Downloader`. The `/downloads` *listing* is JSON on the API host; only the file bytes come from the download host (the `s3Url` field).
 
-### The dual-DataFrame contract
+### `client.py` — `AGRClient`
 
-Every endpoint and every cache entry deals in a `(processed_df, raw_df)` tuple:
-- **processed** — flattened, analysis-ready columns (a Pydantic processed model like `Allele`, `Phenotype`).
-- **raw** — the validated full API record (a `Raw*` model), preserving nested dicts/lists.
+Async API client wrapping one pooled `httpx.AsyncClient` bounded by an `asyncio.Semaphore` (default `max_concurrent=5`). `get_json` / `get_text` issue GETs through `_get`, which **retries** transient failures (statuses 429/502/503/504, timeouts, transport errors) with full-jitter exponential backoff, honoring `Retry-After`. `list_downloads()` fetches `/downloads` and validates it into `list[DownloadFile]` via a module-level `TypeAdapter`. Async context manager; `aclose()` closes the pool.
 
-`models.py` defines both halves per entity. `Raw*` models validate the incoming API shape; the processed models define the flattened output. (Note `RawAllele` fields are deliberately `Optional`/defaulted because the alleles endpoint also returns summary records that omit fields — see commit `d82b54f`.)
+### `downloader.py` — `Downloader`
 
-### Endpoints (`src/endpoints/`)
+Host-agnostic streaming file downloader (deliberately **not** AGR-specific — usable for any absolute URL). `download(url, dest, *, expected_size=None)` streams to disk in 1 MiB chunks via `client.stream(...)`, writes to a `.part` temp file then `os.replace`s into place (atomic; `dest` only ever exists complete). Bytes are written **verbatim** — `.gz` stays compressed on disk and is inflated at ingest. Retries transport/transient-status errors with the same backoff style as the client. Raises `SizeMismatchError` on a post-download size check.
 
-Each endpoint is an `async` function decorated with `@agr_endpoint("/gene/{gene_id}/...")` (`base.py`). The decorator attaches a `url_template` attribute to the function; this template is the single source of truth for both the HTTP path **and** the cache key. Adding an endpoint means: write the async function in its own module, decorate it with its URL template, return `(processed_df, raw_df)`, and re-export it from `endpoints/__init__.py` (add it to `__all__`). `phenotypes_download` is the odd one out — it parses a TSV download rather than JSON.
+> Caveat: the `/downloads` listing's `size` is the **uncompressed** size, but we fetch the compressed `.gz`. So do **not** pass `expected_size=DownloadFile.size` — it will always mismatch. The skip-if-already-downloaded shortcut only engages when `expected_size` is given, so it's currently a no-op for these files.
 
-Endpoint modules import the decorator from the leaf module (`from endpoints.base import agr_endpoint`), **not** from the package (`from endpoints import ...`); the package `__init__` imports the endpoint modules, so importing back through it would be circular. Callers (notebook, `utils`) get endpoints from the package: `from endpoints import get_orthologs, ...`.
+### `ingest.py` — decompress + parse
 
-### Client (`src/client.py`)
+Free functions, no class. Read straight from the compressed file into memory (no decompressed copy on disk):
+- `load_json_gz(path) -> Any` — `gzip.open` + `json.load`.
+- `load_tsv_gz(path, dtype=None) -> pd.DataFrame` — `pd.read_csv(sep="\t", comment="#", compression="gzip")`. The `comment="#"` skips AGR's leading metadata block; `dtype=str` is needed for the gene file so digit-like symbols/IDs aren't coerced to numbers.
 
-`AsyncAGRClient` wraps `httpx.AsyncClient` with an `asyncio.Semaphore` (default `max_concurrent=5`) to bound in-flight requests. Use it as an async context manager, or call `.close()` explicitly (the notebook does). The alleles endpoint paginates (`_PAGE_SIZE=500`): it fetches page 1 for the total count, then `gather`s the remaining pages.
+Note: `sep="\t"` in real source files uses pandas' fast C engine. (A spurious "falling back to the python engine / regex separator" warning only appears when `\t` is passed through a shell `-c` invocation, where it arrives as a literal two-char `\t` — not a real-code problem.)
 
-### Cache (`src/cache.py`)
+### `normalizer.py` — the gene index
 
-A filesystem cache whose directory tree **mirrors the API path** — `cache/gene/{gene_id}/{endpoint}/`. Each entry holds three files:
-- `processed.parquet` (zstd) — columnar, dtype-preserving.
-- `raw.parquet` (zstd) — also Parquet, but the nested dict/list columns are JSON-encoded to strings first (`_encode_nested_columns` classifies a column by its first non-null value). The encoded column names are recorded in `meta["raw_json_columns"]` so `get_dataframes(load_raw=True)` can `json.loads` them back into Python objects. This replaced an older `raw.pkl.gz` (gzipped pickle): Parquet+zstd decompresses in Arrow's C layer and **releases the GIL on read**, so raw loads are faster and the `ThreadPoolExecutor` fan-out in `utils.py` actually parallelizes — pickle held the GIL through deserialization and bottlenecked on one core.
-- `meta.json` — `cached_at`, `cache_version`, row counts, `raw_json_columns` (the hook for future TTL/invalidation).
+`load_gene_index(path) -> GeneIndex` reads `GENE-TSV-COMBINED` (`dtype=str`, all columns) and precomputes O(1) lookups. The file is ~914k rows across 9 species; the real ID column is **`GeneId`** (not `GeneID`); `GeneSymbol` is **not unique** even within a species; `GeneSecondaryIds` are deprecated IDs.
 
-Writes go through `_atomic_write` (temp file in the same dir → `os.replace`), and `processed.parquet` is written **last** so its presence — which `has_dataframes` keys off — guarantees the whole entry is complete. Bump `_CACHE_VERSION` when the on-disk shape changes. The cache directory is gitignored.
+`build_gene_index` fills four `dict[str, list[int]]` tables mapping each identifier form to row positions in the retained `records` DataFrame, tagged by `MatchKind`:
 
-### Orchestration (`src/utils.py`)
+```
+PRIMARY_ID  >  SECONDARY_ID  >  OFFICIAL_SYMBOL  >  SYNONYM      (precedence, high→low)
+```
 
-`query_gene_ids(endpoint_fn, cache, gene_ids, client, load_raw=False)` is the entry point that ties it together:
-1. Split `gene_ids` into cached vs uncached by checking `cache.has_dataframes(url_template.format(gene_id=...))`.
-2. Read cached entries in parallel across CPUs (`ThreadPoolExecutor` driven via `run_in_executor`) — the Parquet reads decompress/decode in Arrow's C layer, which releases the GIL, so this genuinely scales across cores (this is why raw was moved off pickle — see the Cache section).
-3. Fetch uncached entries concurrently (bounded by the client semaphore), then persist each.
-4. `pd.concat` everything into one processed DataFrame (and raw, only when `load_raw=True` — otherwise the `raw.parquet` read is skipped entirely).
+**Precedence is the `MatchKind` enum's definition order**, surfaced by `for kind in MatchKind` in `_resolve` (there is no explicit sort; the int values are documentation only). Keep members declared best-to-worst.
+
+`GeneIndex.normalize(queries, *, taxon=None, limit=1, case_insensitive=False) -> pd.DataFrame`:
+- `queries`: `str | list[str]` (scalar is wrapped). Built for batches of thousands.
+- Returns one row per `(query, match)`: columns `query`, `match_kind`, then **all** gene-record columns. Input order preserved.
+- **Unmatched queries are retained** with null `match_kind` (and `NaN` record cells) so misses are visible. Filter with `df.match_kind.notna()`.
+- `limit` caps matches per query (`limit=None` = all → useful for top-N when no taxon disambiguates). Pipeline is **precedence-sort → taxon-filter → dedup → limit** (i.e. filter-then-limit). A kind filter, if ever wanted, is left to the caller on the returned frame — note that user-side kind-filtering happens *after* `limit`.
+- Within a tier, matches are ordered by **row/file order** (not species priority).
+- `case_insensitive=True` consults a **lazily-built** casefolded copy of the tables (zero cost otherwise). Default is case-sensitive, since case can be meaningful across species (human `TP53` vs mouse `Trp53`).
+
+### Taxon resolution — `taxa.json` + `resolve_taxon`
+
+`taxa.json` (in `src/`, read via a path relative to `normalizer.py`) holds one entry per species with `id` / `species` / `common`. At import, `_load_taxon_lookup` flattens every alias — full `NCBITaxon:` ID, bare number, species name, and each common name — into one casefolded `dict[str, str]`. `resolve_taxon(value)` strips + casefolds and returns the canonical `NCBITaxon:` ID, raising `ValueError` on unknown. `normalize` resolves `taxon` once up front, so a bad taxon fails fast. This lets users pass `"human"`, `"9606"`, `"Homo sapiens"`, or `"NCBITaxon:9606"` interchangeably. Ambiguous aliases (`frog`, `xenopus`) are intentionally omitted.
+
+### `models.py`
+
+`DownloadFile` (Pydantic) is the **active** model — it mirrors a `/downloads` entry verbatim (camelCase fields to match the API), with `size: PositiveInt` and `lastModified: datetime`. The `In_*` / `Out_*` ortholog/phenotype/allele models are **legacy placeholders** carried over from `src_old/`; they predate the current API inspection and need reworking before use (the live `/gene/{id}` response nests under a `gene` key with different field names).
+
+### Placeholder
+
+`main.py` is currently empty — it's the planned user-facing entry point.
+
+## Data flows
+
+**Bulk file:** `AGRClient.list_downloads()` (API host) → pick a `DownloadFile` by `dataType`/`fileType` → `Downloader.download(file.s3Url, dest)` (download host) → `ingest.load_tsv_gz` / `load_json_gz`. Don't hardcode URLs — `s3Url` embeds `releaseVersion`, which changes each release; select by intent and resolve at runtime.
+
+**Gene normalization (preprocessing):** download `GENE-TSV-COMBINED` → `load_gene_index` (one-time ~10 s build; ~µs lookups) → `normalize(symbols_or_ids, taxon=..., limit=...)` → DataFrame of resolved canonical records → proceed with downstream queries using the official `GeneId`.
+
+## Cache / scratch
+
+Downloaded bulk files and other artifacts live under `cache/` at the repo root. `agr_http/downloads.json` is a saved snapshot of a `/downloads` listing. `src_old/` is the previous (binary + endpoint-cache) implementation, kept for reference.

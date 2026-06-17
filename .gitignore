@@ -11,8 +11,13 @@ __pycache__/
 # cache
 cache/
 
-# test files
+# test and archive files
 test.txt
+agr_http
+src_old/
 
 # environment variables
 .env
+
+# wheel files
+*.whl
