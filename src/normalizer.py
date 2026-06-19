@@ -2,12 +2,13 @@
 
 `load_gene_index` reads the file and precomputes O(1) lookups from every
 identifier form — primary ID, deprecated (secondary) ID, official symbol,
-synonym and systematic name — to row positions in the loaded table.
+synonym, systematic name and external cross-reference (e.g. `NCBI_Gene:`,
+`ENSEMBL:`, `UniProtKB:`) — to row positions in the loaded table.
 
 `GeneIndex.normalize` takes one query or a list and returns a DataFrame with one
 row per match: the original `query`, the `match_kind`, and every column of the
 matched gene record. Matches are ranked by precedence (primary ID > secondary ID
-> official symbol > synonym); `limit` caps matches per query and `taxon` narrows
+> official symbol > synonym > cross-reference); `limit` caps matches per query and `taxon` narrows
 symbols that recur across species. Unmatched queries are still returned, with a
 null `match_kind`. Matching is case-sensitive unless `case_insensitive=True`,
 since case can be meaningful across species (human TP53 vs mouse Trp53).
@@ -17,13 +18,20 @@ import enum
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import NamedTuple
+from typing import Final, NamedTuple
 
 import pandas as pd
 
 from ingest import load_tsv_gz
 
 type _Tables = dict["MatchKind", dict[str, list[int]]]
+
+# Cross-reference databases whose IDs denote protein families / enzyme classes
+# rather than genes; one such token fans out to hundreds of genes, so they are
+# excluded from the index. Keys are the token prefix before the first ':'.
+_XREF_EXCLUDED_PREFIXES: Final[frozenset[str]] = frozenset(
+    {"PANTHER", "TreeFam", "ExPASy", "TCDB"}
+)
 
 _TAXA_PATH = Path(__file__).parent / "taxa.json"
 
@@ -54,6 +62,7 @@ class MatchKind(enum.IntEnum):
     SECONDARY_ID = 1
     OFFICIAL_SYMBOL = 2
     SYNONYM = 3
+    CROSS_REFERENCE = 4
 
 
 class GeneMatch(NamedTuple):
@@ -161,6 +170,7 @@ def build_gene_index(records: pd.DataFrame) -> GeneIndex:
     secondary: dict[str, list[int]] = {}
     official: dict[str, list[int]] = {}
     synonym: dict[str, list[int]] = {}
+    cross_reference: dict[str, list[int]] = {}
 
     for i, gene_id in enumerate(records["GeneId"].tolist()):
         primary.setdefault(gene_id, []).append(i)
@@ -184,11 +194,19 @@ def build_gene_index(records: pd.DataFrame) -> GeneIndex:
                     continue
                 secondary.setdefault(token, []).append(i)
 
+    for i, value in enumerate(records["GeneCrossReferences"].tolist()):
+        if isinstance(value, str):
+            for token in value.split("|"):
+                if not token or token.split(":", 1)[0] in _XREF_EXCLUDED_PREFIXES:
+                    continue
+                cross_reference.setdefault(token, []).append(i)
+
     exact: _Tables = {
         MatchKind.PRIMARY_ID: primary,
         MatchKind.SECONDARY_ID: secondary,
         MatchKind.OFFICIAL_SYMBOL: official,
         MatchKind.SYNONYM: synonym,
+        MatchKind.CROSS_REFERENCE: cross_reference,
     }
     return GeneIndex(records, tuple(records["Taxon"].tolist()), exact)
 

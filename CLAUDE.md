@@ -52,13 +52,15 @@ Note: `sep="\t"` in real source files uses pandas' fast C engine. (A spurious "f
 
 `load_gene_index(path) -> GeneIndex` reads `GENE-TSV-COMBINED` (`dtype=str`, all columns) and precomputes O(1) lookups. The file is ~914k rows across 9 species; the real ID column is **`GeneId`** (not `GeneID`); `GeneSymbol` is **not unique** even within a species; `GeneSecondaryIds` are deprecated IDs.
 
-`build_gene_index` fills four `dict[str, list[int]]` tables mapping each identifier form to row positions in the retained `records` DataFrame, tagged by `MatchKind`:
+`build_gene_index` fills five `dict[str, list[int]]` tables mapping each identifier form to row positions in the retained `records` DataFrame, tagged by `MatchKind`:
 
 ```
-PRIMARY_ID  >  SECONDARY_ID  >  OFFICIAL_SYMBOL  >  SYNONYM      (precedence, high→low)
+PRIMARY_ID  >  SECONDARY_ID  >  OFFICIAL_SYMBOL  >  SYNONYM  >  CROSS_REFERENCE   (precedence, high→low)
 ```
 
 **Precedence is the `MatchKind` enum's definition order**, surfaced by `for kind in MatchKind` in `_resolve` (there is no explicit sort; the int values are documentation only). Keep members declared best-to-worst.
+
+`CROSS_REFERENCE` indexes `GeneCrossReferences` — pipe-separated external IDs (`NCBI_Gene:`, `ENSEMBL:`, `UniProtKB:`, `RefSeq:`, …), populated on ~43% of rows. Keys are the **full `PREFIX:ID` token**, not the bare ID (bare IDs collide across databases — e.g. `601309` is both OMIM and MIM). It is the **lowest** tier, so cross-refs only resolve queries no better identifier matches. Family/class databases that fan one token out to hundreds of genes (`_XREF_EXCLUDED_PREFIXES`: `PANTHER`, `TreeFam`, `ExPASy`, `TCDB`) are **excluded**. Some `RGD:*` tokens also appear in `GeneSecondaryIds`; the higher `SECONDARY_ID` tier wins, so the duplication is harmless.
 
 `GeneIndex.normalize(queries, *, taxon=None, limit=1, case_insensitive=False) -> pd.DataFrame`:
 - `queries`: `str | list[str]` (scalar is wrapped). Built for batches of thousands.
@@ -104,7 +106,7 @@ Ties the lower-level pieces together over a resolved cache dir, with a lazily-bu
 - `Annotator(cache_dir=None, *, client=None, downloader=None)` — one instance serves any genome; `taxon` is passed per call (`normalize`/`ingest_annotation`/`annotate`), defaulting to `None` (no species filter).
 - `async download(dataset, *, refresh=False) -> Path` — resolve the bulk file, stream it, convert TSV→Parquet under `bulk/<dataset>.parquet`, **delete the `.tsv.gz`**; no-op if the parquet exists. Raises if the dataset has no bulk spec.
 - `async normalize(genes, *, taxon=None, limit=1, case_insensitive=False)` — passes through to `GeneIndex.normalize`.
-- `async ingest_annotation(source, name, *, gene_id_column, normalize=True, taxon=None, case_insensitive=False, override=False) -> dict` — store an external table under `external/<name>.parquet`, keyed by canonical `GeneId` (gene ids normalized via the index, replacing the old Rust `normalize_symbols_map`). Ported from `src_old/utils.py`.
+- `async ingest_annotation(source, name, *, gene_id_column, normalize=True, taxon=None, case_insensitive=False, override=False) -> tuple[dict, pd.DataFrame | None]` — store an external table under `external/<name>.parquet`, keyed by canonical `GeneId` (gene ids normalized via the index, replacing the old Rust `normalize_symbols_map`). Ported from `src_old/utils.py`. `gene_id_column` is `str | list[str]`: with a list, the columns are tried **left-to-right per row** and the first identifier that resolves wins (a fallback for tables whose primary ID column has gaps) — normalization is mapping-aware, so a non-null-but-unresolvable value falls through to the next column; `normalize=False` degrades to a plain first-non-null coalesce. The id columns are **kept as-is** and the resolved canonical id is written to a **separate, freshly-added `GeneId` column** (so the input must not already contain a `GeneId` column — that raises); rows where no candidate resolves are dropped and counted. Returns `(summary_dict, unmapped_df)` where `unmapped_df` holds the dropped rows with their original columns (null when the cache hit short-circuits or nothing was dropped).
 - `async annotate(genes, *sources, taxon=None, limit=1, case_insensitive=False) -> DataFrame` — build a base frame (`list[str]` → `normalize`, **misses retained** with null cells; or pass a pre-normalized DataFrame), then **wide left-join** each source onto `GeneId` in order. `limit` is forwarded to `normalize`, capping matches per query (`limit=None` = all) — useful for fanning a symbol out to several genes when no `taxon` disambiguates; each matched gene is annotated as its own base row. An `AGRDataset` contributes its **native** columns (bulk filtered by `join_key ∈ gene_ids`, or per-gene API fetched + cached under `api/<dataset>/<id>.parquet`); a `str` names an ingested annotation and contributes `name.`-prefixed columns. An unknown `str` raises.
 
 Per-gene API fetches paginate (`limit`/`page`, page-1-for-total, remaining pages concurrent — both phenotypes and alleles paginate) and are cached one Parquet per gene; cache hits skip the network. Clients are created on demand via `AsyncExitStack` (same pattern as `preprocess`).

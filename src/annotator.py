@@ -90,42 +90,62 @@ class Annotator:
         source: str | Path | pd.DataFrame,
         name: str,
         *,
-        gene_id_column: str,
+        gene_id_column: str | list[str],
         normalize: bool = True,
         taxon: str | None = None,
         case_insensitive: bool = False,
         override: bool = False,
-    ) -> dict:
-        """Store an external annotation table, keyed by canonical `GeneId`."""
+    ) -> tuple[dict, pd.DataFrame | None]:
+        """Store an external annotation table, keyed by canonical `GeneId`.
+
+        `gene_id_column` may name several columns; they are tried left-to-right
+        per row, the first identifier that resolves wins (a fallback for tables
+        whose primary ID column has gaps). The id columns are kept as-is and a
+        separate `GeneId` column is added for the resolved canonical id, so the
+        input must not already contain a `GeneId` column. The returned unmapped
+        frame holds the rows (with their original columns) where no candidate
+        resolved.
+        """
         dest = self._cache / "external" / f"{name}.parquet"
         if dest.exists() and not override:
-            return _ingest_summary(name, None, None, None, None)
+            return _ingest_summary(name, None, None, None, None), None
 
         df = source.copy() if isinstance(source, pd.DataFrame) else _read_table(source)
-        if gene_id_column not in df.columns:
+        columns = [gene_id_column] if isinstance(gene_id_column, str) else list(gene_id_column)
+        if not columns:
+            raise ValueError("gene_id_column must name at least one column")
+        missing = [c for c in columns if c not in df.columns]
+        if missing:
             raise KeyError(
-                f"gene_id_column {gene_id_column!r} not found; columns are {list(df.columns)}"
+                f"gene_id_column(s) {missing!r} not found; columns are {list(df.columns)}"
             )
-        if gene_id_column != _GENE_ID and _GENE_ID in df.columns:
+        if _GENE_ID in df.columns:
             raise ValueError(
-                f"input already has a {_GENE_ID!r} column distinct from {gene_id_column!r}; "
-                "rename it to avoid a collision."
+                f"input already has a {_GENE_ID!r} column; rename it — a separate "
+                f"{_GENE_ID!r} column is added for the resolved canonical id."
             )
-        df = df.rename(columns={gene_id_column: _GENE_ID})
+
+        if normalize:
+            str_cols = df[columns].astype(str)
+            values = [v for v in pd.unique(str_cols.values.ravel()) if v != "nan"]
+            mapping = await self._id_map(values, taxon, case_insensitive)
+            resolved = str_cols.apply(lambda col: col.map(mapping)).bfill(axis=1).iloc[:, 0]
+        else:
+            resolved = df[columns].bfill(axis=1).iloc[:, 0]
+
+        df[_GENE_ID] = resolved
 
         rows_in = len(df)
         rows_dropped = 0
+        unmapped_df: pd.DataFrame | None = None
         if normalize:
-            mapping = await self._id_map(
-                df[_GENE_ID].astype(str).tolist(), taxon, case_insensitive
-            )
-            df[_GENE_ID] = df[_GENE_ID].astype(str).map(mapping)
-            unmapped = df[_GENE_ID].isna()
-            rows_dropped = int(unmapped.sum())
-            df = df[~unmapped].reset_index(drop=True)
+            unmapped_mask = df[_GENE_ID].isna()
+            unmapped_df = df[unmapped_mask].copy()
+            rows_dropped = int(unmapped_mask.sum())
+            df = df[~unmapped_mask].reset_index(drop=True)
 
         write_parquet(df, dest)
-        return _ingest_summary(name, rows_in, len(df), rows_dropped, normalize)
+        return _ingest_summary(name, rows_in, len(df), rows_dropped, normalize), unmapped_df
 
     async def annotate(
         self,
