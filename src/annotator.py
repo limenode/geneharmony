@@ -28,7 +28,8 @@ from datasets import DATASETS, AGRDataset, ApiSpec, BulkSpec
 from downloader import Downloader
 from ingest import load_tsv_gz
 from models import DownloadFile
-from normalizer import GeneIndex, resolve_taxon
+from normalizer import GeneIndex
+from taxa import resolve_taxon
 from preprocess import prepare_gene_index, resolve_cache_dir
 from store import read_parquet, write_parquet
 
@@ -36,7 +37,6 @@ type Genes = str | list[str] | pd.DataFrame
 
 _GENE_ID: Final = "GeneId"
 _PAGE_SIZE: Final = 500
-
 
 class Annotator:
     def __init__(
@@ -193,7 +193,7 @@ class Annotator:
             case_insensitive=case_insensitive,
         )
         if target_taxon:
-            df = df[df["Gene2SpeciesTaxonID"] == resolve_taxon(target_taxon)]
+            df = df[df["Gene2SpeciesTaxonID"] == resolve_taxon(target_taxon).id]
             
         return df[["query", "match_kind", "Gene2ID", "Gene2Symbol", "Gene2SpeciesTaxonID"]]
         

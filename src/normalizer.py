@@ -15,7 +15,6 @@ since case can be meaningful across species (human TP53 vs mouse Trp53).
 """
 
 import enum
-import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, NamedTuple
@@ -23,6 +22,7 @@ from typing import Final, NamedTuple
 import pandas as pd
 
 from ingest import load_tsv_gz
+from taxa import resolve_taxon
 
 type _Tables = dict["MatchKind", dict[str, list[int]]]
 
@@ -32,29 +32,6 @@ type _Tables = dict["MatchKind", dict[str, list[int]]]
 _XREF_EXCLUDED_PREFIXES: Final[frozenset[str]] = frozenset(
     {"PANTHER", "TreeFam", "ExPASy", "TCDB"}
 )
-
-_TAXA_PATH = Path(__file__).parent / "taxa.json"
-
-
-def _load_taxon_lookup() -> dict[str, str]:
-    lookup: dict[str, str] = {}
-    for entry in json.loads(_TAXA_PATH.read_text()):
-        taxon_id: str = entry["id"]
-        number = taxon_id.split(":", 1)[1]
-        for alias in (taxon_id, number, entry["species"], *entry["common"]):
-            lookup[alias.casefold()] = taxon_id
-    return lookup
-
-
-_TAXON_LOOKUP: dict[str, str] = _load_taxon_lookup()
-
-
-def resolve_taxon(value: str) -> str:
-    """Resolve a taxon ID, number, species name or common name to its NCBITaxon ID."""
-    taxon_id = _TAXON_LOOKUP.get(value.strip().casefold())
-    if taxon_id is None:
-        raise ValueError(f"unknown taxon: {value!r}")
-    return taxon_id
 
 
 class MatchKind(enum.IntEnum):
@@ -73,7 +50,7 @@ class GeneMatch(NamedTuple):
 @dataclass(slots=True)
 class GeneIndex:
     records: pd.DataFrame
-    _taxa: tuple[str, ...]
+    _taxon_ids: tuple[str, ...]
     _exact: _Tables
     _folded: _Tables | None = None
 
@@ -87,8 +64,7 @@ class GeneIndex:
     ) -> pd.DataFrame:
         if isinstance(queries, str):
             queries = [queries]
-        if taxon is not None:
-            taxon = resolve_taxon(taxon)
+        taxon_id = resolve_taxon(taxon).id if taxon is not None else None
 
         order: list[int] = []
         query_col: list[str] = []
@@ -98,7 +74,7 @@ class GeneIndex:
         miss_query: list[str] = []
 
         for i, query in enumerate(queries):
-            matches = self._resolve(query, taxon, case_insensitive)
+            matches = self._resolve(query, taxon_id, case_insensitive)
             if limit is not None:
                 matches = matches[:limit]
             if matches:
@@ -126,7 +102,7 @@ class GeneIndex:
             .reset_index(drop=True)
         )
 
-    def _resolve(self, query: str, taxon: str | None, case_insensitive: bool) -> list[GeneMatch]:
+    def _resolve(self, query: str, taxon_id: str | None, case_insensitive: bool) -> list[GeneMatch]:
         tables = self._exact
         key = query
         if case_insensitive:
@@ -138,8 +114,8 @@ class GeneIndex:
             for kind in MatchKind
             for row in tables[kind].get(key, ())
         ]
-        if taxon is not None:
-            matches = [m for m in matches if self._taxa[m.row] == taxon]
+        if taxon_id is not None:
+            matches = [m for m in matches if self._taxon_ids[m.row] == taxon_id]
 
         seen: set[int] = set()
         unique: list[GeneMatch] = []
