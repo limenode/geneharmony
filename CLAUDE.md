@@ -18,6 +18,13 @@ pixi run python <script>                    # run Python inside the env
 pixi run jupyter lab src/notebook.ipynb     # open the driver notebook
 ```
 
+**Notebook outputs are stripped on commit** via a git clean filter (`*.ipynb filter=nbstrip` in `.gitattributes`), keeping `notebook.ipynb` diffs to code only. The filter is repo-local config, so enable it once per clone:
+
+```bash
+git config filter.nbstrip.clean "pixi run jupyter nbconvert --clear-output --to notebook --stdin --stdout --log-level=ERROR"
+git config filter.nbstrip.smudge cat
+```
+
 **Imports are flat** (`from client import ...`, `from normalizer import ...`) with no package prefix, so code only resolves when **`src/` is the working directory / on `sys.path`**. The notebook runs there; standalone scripts must too (e.g. `sys.path.insert(0, "src")`).
 
 ## Conventions
