@@ -28,7 +28,7 @@ from datasets import DATASETS, AGRDataset, ApiSpec, BulkSpec
 from downloader import Downloader
 from ingest import load_tsv_gz
 from models import DownloadFile
-from normalizer import GeneIndex
+from normalizer import GeneIndex, resolve_taxon
 from preprocess import prepare_gene_index, resolve_cache_dir
 from store import read_parquet, write_parquet
 
@@ -175,6 +175,28 @@ class Annotator:
             if key != _GENE_ID:
                 out = out.drop(columns=key)
         return out.reset_index(drop=True)
+    
+    async def get_orthologs(
+        self, 
+        genes: Genes,
+        taxon: str | None = None,
+        target_taxon: str | None = None,
+        limit: int | None = 1,
+        case_insensitive: bool = False
+    ) -> pd.DataFrame:
+        """Convenience method to get orthologs for a set of genes."""
+        df = await self.annotate(
+            genes,
+            AGRDataset.ORTHOLOGY,
+            taxon=taxon,
+            limit=limit,
+            case_insensitive=case_insensitive,
+        )
+        if target_taxon:
+            df = df[df["Gene2SpeciesTaxonID"] == resolve_taxon(target_taxon)]
+            
+        return df[["query", "match_kind", "Gene2ID", "Gene2Symbol", "Gene2SpeciesTaxonID"]]
+        
 
     async def _gene_index(self) -> GeneIndex:
         if self._index is None:
