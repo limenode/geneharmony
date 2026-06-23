@@ -88,8 +88,6 @@ def _project_alleles(gene_id: str, result: Json) -> dict[str, Any]:
 
 
 DATASETS: Final[dict[AGRDataset, DatasetSpec]] = {
-    # GENE backs the in-memory gene index; downloaded like any other bulk file,
-    # never joined onto a base frame in annotate().
     AGRDataset.GENE: DatasetSpec(
         bulk=BulkSpec("GENE", "TSV", "COMBINED", "GeneId"),
         api=None,
