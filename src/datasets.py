@@ -9,7 +9,9 @@ Each `AGRDataset` maps to a `DatasetSpec` describing how to obtain it:
 Orthology is served from its bulk TSV (complete, richly columned); phenotypes and
 alleles from the per-gene API (their bulk files are nested per-MOD JSON, deferred).
 The API orthology projection mirrors the bulk column names so either backend
-yields the same `Gene1ID`/`Gene2ID`/`Gene2SpeciesTaxonID` shape.
+yields the same `Gene1ID`/`Gene2ID`/`Gene2SpeciesTaxonID` shape. `GENE` is the
+bulk file backing the in-memory gene index — downloaded through the same path,
+but built into a `GeneIndex` rather than joined onto a base frame.
 """
 
 import enum
@@ -21,6 +23,7 @@ type Projector = Callable[[str, Json], dict[str, Any]]
 
 
 class AGRDataset(enum.StrEnum):
+    GENE = "gene"
     ORTHOLOGY = "orthology"
     PHENOTYPES = "phenotypes"
     ALLELES = "alleles"
@@ -85,6 +88,12 @@ def _project_alleles(gene_id: str, result: Json) -> dict[str, Any]:
 
 
 DATASETS: Final[dict[AGRDataset, DatasetSpec]] = {
+    # GENE backs the in-memory gene index; downloaded like any other bulk file,
+    # never joined onto a base frame in annotate().
+    AGRDataset.GENE: DatasetSpec(
+        bulk=BulkSpec("GENE", "TSV", "COMBINED", "GeneId"),
+        api=None,
+    ),
     AGRDataset.ORTHOLOGY: DatasetSpec(
         bulk=BulkSpec("ORTHOLOGY-ALLIANCE", "TSV", "COMBINED", "Gene1ID"),
         api=ApiSpec("/gene/{gene_id}/orthologs", "Gene1ID", _project_orthologs),

@@ -69,7 +69,7 @@ PRIMARY_ID  >  SECONDARY_ID  >  OFFICIAL_SYMBOL  >  SYNONYM  >  CROSS_REFERENCE 
 
 `CROSS_REFERENCE` indexes `GeneCrossReferences` — pipe-separated external IDs (`NCBI_Gene:`, `ENSEMBL:`, `UniProtKB:`, `RefSeq:`, …), populated on ~43% of rows. Keys are the **full `PREFIX:ID` token**, not the bare ID (bare IDs collide across databases — e.g. `601309` is both OMIM and MIM). It is the **lowest** tier, so cross-refs only resolve queries no better identifier matches. Family/class databases that fan one token out to hundreds of genes (`_XREF_EXCLUDED_PREFIXES`: `PANTHER`, `TreeFam`, `ExPASy`, `TCDB`) are **excluded**. Some `RGD:*` tokens also appear in `GeneSecondaryIds`; the higher `SECONDARY_ID` tier wins, so the duplication is harmless.
 
-`GeneIndex.normalize(queries, *, taxon=None, limit=1, case_insensitive=False) -> pd.DataFrame`:
+`GeneIndex.lookup(queries, *, taxon=None, limit=1, case_insensitive=False) -> pd.DataFrame`:
 - `queries`: `str | list[str]` (scalar is wrapped). Built for batches of thousands.
 - Returns one row per `(query, match)`: columns `query`, `match_kind`, then **all** gene-record columns. Input order preserved.
 - **Unmatched queries are retained** with null `match_kind` (and `NaN` record cells) so misses are visible. Filter with `df.match_kind.notna()`.
@@ -85,22 +85,9 @@ Self-contained species resolution with no dependency on the gene index (not even
 
 To append taxon data to a frame, `taxon_mapper(field)` builds a `value -> field` callable for `df[col].map(...)`. `field` is a `TaxonField` (`StrEnum`: `ID` / `NUMBER` / `SPECIES` / `COMMON_NAME`, each value the matching `Taxon` attribute name). The returned callable accepts any alias (so it works on `normalize`'s `Taxon` column, orthology's `Gene2SpeciesTaxonID`, etc.) and yields `None` for unknown or non-string cells — e.g. `df["common_name"] = df["Taxon"].map(taxon_mapper(TaxonField.COMMON_NAME))`.
 
-### `preprocess.py` — cache resolution + `prepare_gene_index`
-
-The user-facing preprocessing step that hides the download and index build behind a layered cache. `default_cache_dir()` is `$XDG_CACHE_HOME/alliance_wrapper` (falling back to `~/.cache/alliance_wrapper`); `resolve_cache_dir(cache_dir)` returns the user's override or that default, creating it. Pass a path to share a cache between users; omit it for the home default.
-
-`prepare_gene_index(cache_dir=None, *, refresh=False, client=None, downloader=None) -> GeneIndex` tries the cheapest source first and writes each cheaper artifact for next time:
-
-```
-gene.parquet     records DataFrame      — skips re-parsing the gzipped TSV
-gene.tsv.gz      raw AGR bulk download   — converted to parquet on first read
-```
-
-The index dict tables are rebuilt in memory each call (~2 s); they are **not** pickled — a pickled `GeneIndex` is ~5× the parquet on disk (uncompressed object graph: the records frame plus duplicated string keys) yet only saves ~0.6 s over rebuilding, so it isn't worth it. On a cold cache it downloads `GENE-TSV-COMBINED` (creating an `AGRClient`/`Downloader` **only when a fetch is actually needed**; passing your own leaves their lifecycle to you), writes the parquet, and returns. `refresh=True` bypasses every layer and re-downloads. The parquet is existence-cached and becomes **stale across AGR releases** — use `refresh=True` to rebuild.
-
 ### `datasets.py` — dataset registry
 
-`AGRDataset` (`StrEnum`: `ORTHOLOGY`, `PHENOTYPES`, `ALLELES`) is the typed handle users pass to `download`/`annotate`. `DATASETS` maps each member to a `DatasetSpec(bulk, api)`:
+`AGRDataset` (`StrEnum`: `GENE`, `ORTHOLOGY`, `PHENOTYPES`, `ALLELES`) is the typed handle users pass to `download`/`annotate`. `GENE` is the bulk file backing the gene index — downloaded through the same `download` path as the rest, but built into a `GeneIndex` rather than joined onto a base frame. `DATASETS` maps each member to a `DatasetSpec(bulk, api)`:
 - `BulkSpec(data_type, file_type, data_sub_type, join_key)` — a selector into the `/downloads` listing (matched at runtime; never a hardcoded `s3Url`) plus the column its rows join on.
 - `ApiSpec(endpoint, join_key, project)` — a per-gene endpoint template and a `project(gene_id, result) -> dict` that flattens one API result into one flat row.
 
@@ -112,15 +99,19 @@ Each dataset has **one natural backend** so output columns stay predictable: ort
 
 ### `annotator.py` — `Annotator` (the user-facing surface)
 
-Ties the lower-level pieces together over a resolved cache dir, with a lazily-built `GeneIndex` (via `prepare_gene_index`). Intended use is an **iterative filter-then-requery traversal** — one primary AGR dataset per `annotate` call — so cardinality stays under the caller's control (no cross-dataset Cartesian blow-up).
+Ties the lower-level pieces together over a resolved cache dir, with a lazily-built `GeneIndex` cached for the instance's lifetime. Intended use is an **iterative filter-then-requery traversal** — one primary AGR dataset per `annotate` call — so cardinality stays under the caller's control (no cross-dataset Cartesian blow-up).
+
+Cache resolution lives here: module-level `default_cache_dir()` is `$XDG_CACHE_HOME/alliance_wrapper` (falling back to `~/.cache/alliance_wrapper`); `resolve_cache_dir(cache_dir)` returns the user's override or that default, creating it (called once in `__init__`). Pass a path to share a cache between users; omit it for the home default.
+
+The gene index is built lazily in `_gene_index()` and memoized in `self._index` for the instance's lifetime: it calls `download(AGRDataset.GENE)` (the gene bulk file goes to `bulk/gene.parquet` like any other dataset), then builds the index from that parquet in memory (~2 s; **not** pickled — a pickled `GeneIndex` is ~5× the parquet yet saves only ~0.6 s). The parquet is existence-cached and becomes **stale across AGR releases**; `download(AGRDataset.GENE, refresh=True)` (or deleting it) rebuilds.
 
 - `Annotator(cache_dir=None, *, client=None, downloader=None)` — one instance serves any genome; `taxon` is passed per call (`normalize`/`ingest_annotation`/`annotate`), defaulting to `None` (no species filter).
-- `async download(dataset, *, refresh=False) -> Path` — resolve the bulk file, stream it, convert TSV→Parquet under `bulk/<dataset>.parquet`, **delete the `.tsv.gz`**; no-op if the parquet exists. Raises if the dataset has no bulk spec.
-- `async normalize(genes, *, taxon=None, limit=1, case_insensitive=False)` — passes through to `GeneIndex.normalize`.
+- `async download(dataset, *, refresh=False) -> Path` — resolve the bulk file, stream it, convert TSV→Parquet under `bulk/<dataset>.parquet`, **delete the `.tsv.gz`**; no-op if the parquet exists. `AGRClient`/`Downloader` are created only when a fetch is actually needed (`AsyncExitStack`); passing your own leaves their lifecycle to you. Raises if the dataset has no bulk spec.
+- `async normalize(genes, *, taxon=None, limit=1, case_insensitive=False)` — passes through to `GeneIndex.lookup`.
 - `async ingest_annotation(source, name, *, gene_id_column, normalize=True, taxon=None, case_insensitive=False, override=False) -> tuple[dict, pd.DataFrame | None]` — store an external table under `external/<name>.parquet`, keyed by canonical `GeneId` (gene ids normalized via the index, replacing the old Rust `normalize_symbols_map`). Ported from `src_old/utils.py`. `gene_id_column` is `str | list[str]`: with a list, the columns are tried **left-to-right per row** and the first identifier that resolves wins (a fallback for tables whose primary ID column has gaps) — normalization is mapping-aware, so a non-null-but-unresolvable value falls through to the next column; `normalize=False` degrades to a plain first-non-null coalesce. The id columns are **kept as-is** and the resolved canonical id is written to a **separate, freshly-added `GeneId` column** (so the input must not already contain a `GeneId` column — that raises); rows where no candidate resolves are dropped and counted. Returns `(summary_dict, unmapped_df)` where `unmapped_df` holds the dropped rows with their original columns (null when the cache hit short-circuits or nothing was dropped).
 - `async annotate(genes, *sources, taxon=None, limit=1, case_insensitive=False) -> DataFrame` — build a base frame (`list[str]` → `normalize`, **misses retained** with null cells; or pass a pre-normalized DataFrame), then **wide left-join** each source onto `GeneId` in order. `limit` is forwarded to `normalize`, capping matches per query (`limit=None` = all) — useful for fanning a symbol out to several genes when no `taxon` disambiguates; each matched gene is annotated as its own base row. An `AGRDataset` contributes its **native** columns (bulk filtered by `join_key ∈ gene_ids`, or per-gene API fetched + cached under `api/<dataset>/<id>.parquet`); a `str` names an ingested annotation and contributes `name.`-prefixed columns. An unknown `str` raises.
 
-Per-gene API fetches paginate (`limit`/`page`, page-1-for-total, remaining pages concurrent — both phenotypes and alleles paginate) and are cached one Parquet per gene; cache hits skip the network. Clients are created on demand via `AsyncExitStack` (same pattern as `preprocess`).
+Per-gene API fetches paginate (`limit`/`page`, page-1-for-total, remaining pages concurrent — both phenotypes and alleles paginate) and are cached one Parquet per gene; cache hits skip the network. Clients are created on demand via `AsyncExitStack` (same pattern as `download`).
 
 ### `models.py`
 
@@ -134,17 +125,16 @@ Per-gene API fetches paginate (`limit`/`page`, page-1-for-total, remaining pages
 
 **Bulk file:** `AGRClient.list_downloads()` (API host) → pick a `DownloadFile` by `dataType`/`fileType` → `Downloader.download(file.s3Url, dest)` (download host) → `ingest.load_tsv_gz` / `load_json_gz`. Don't hardcode URLs — `s3Url` embeds `releaseVersion`, which changes each release; select by intent and resolve at runtime.
 
-**Gene normalization (preprocessing):** `prepare_gene_index(cache_dir)` resolves the cache and returns a ready `GeneIndex` — loading the parquet if present, else downloading `GENE-TSV-COMBINED` and building (one-time ~10 s; ~µs lookups). Then `normalize(symbols_or_ids, taxon=..., limit=...)` → DataFrame of resolved canonical records → proceed with downstream queries using the official `GeneId`. `normalizer.load_gene_index(path)` remains the lower-level "build straight from a TSV path" entry point used by `prepare_gene_index`.
+**Gene normalization:** `Annotator._gene_index()` returns a ready `GeneIndex` — `download(AGRDataset.GENE)` yields `bulk/gene.parquet` (downloaded + converted on a cold cache, one-time ~10 s; ~µs lookups) which it builds into the index, memoized on the instance. Then `Annotator.normalize(symbols_or_ids, taxon=..., limit=...)` → `GeneIndex.lookup` → DataFrame of resolved canonical records → proceed with downstream queries using the official `GeneId`. `normalizer.load_gene_index(path)` remains the lower-level "build straight from a TSV path" entry point.
 
 **Annotation (the user-facing flow):** `Annotator(cache_dir)` → optionally `await download(AGRDataset.X)` for bulk datasets → `await annotate(genes, AGRDataset.X, taxon=...)` returns a wide frame on the *normalized* base → slice it (e.g. `df[df.Gene2SpeciesTaxonID == "NCBITaxon:10090"]["Gene2ID"]`) → feed the slice back into the next `annotate` call. One AGR dataset per call; combine with ingested annotations by name in the same call.
 
 ## Cache / scratch
 
-Caches default to `~/.cache/alliance_wrapper` (or `$XDG_CACHE_HOME`); the repo-root `cache/` is the manual override used by the notebook and ad-hoc scratch. Layout written by `Annotator`/`prepare_gene_index`:
+Caches default to `~/.cache/alliance_wrapper` (or `$XDG_CACHE_HOME`); the repo-root `cache/` is the manual override used by the notebook and ad-hoc scratch. Layout written by `Annotator`:
 
 ```
-gene.parquet / gene.tsv.gz        # gene index source (preprocess)
-bulk/<dataset>.parquet            # downloaded + converted bulk datasets
+bulk/<dataset>.parquet            # downloaded + converted bulk datasets (incl. bulk/gene.parquet, the gene-index source)
 api/<dataset>/<gene_id>.parquet   # per-gene API results (':' -> '_' in filenames)
 external/<name>.parquet           # ingested annotations
 ```

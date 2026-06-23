@@ -5,7 +5,7 @@ identifier form — primary ID, deprecated (secondary) ID, official symbol,
 synonym, systematic name and external cross-reference (e.g. `NCBI_Gene:`,
 `ENSEMBL:`, `UniProtKB:`) — to row positions in the loaded table.
 
-`GeneIndex.normalize` takes one query or a list and returns a DataFrame with one
+`GeneIndex.lookup` takes one query or a list and returns a DataFrame with one
 row per match: the original `query`, the `match_kind`, and every column of the
 matched gene record. Matches are ranked by precedence (primary ID > secondary ID
 > official symbol > synonym > cross-reference); `limit` caps matches per query and `taxon` narrows
@@ -54,7 +54,7 @@ class GeneIndex:
     _exact: _Tables
     _folded: _Tables | None = None
 
-    def normalize(
+    def lookup(
         self,
         queries: str | list[str],
         *,

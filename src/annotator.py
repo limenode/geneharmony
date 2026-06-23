@@ -17,6 +17,7 @@ an AGR dataset contributes its native columns; an ingested external annotation
 
 import asyncio
 import math
+import os
 from contextlib import AsyncExitStack
 from pathlib import Path
 from typing import Final
@@ -28,15 +29,27 @@ from datasets import DATASETS, AGRDataset, ApiSpec, BulkSpec
 from downloader import Downloader
 from ingest import load_tsv_gz
 from models import DownloadFile
-from normalizer import GeneIndex
+from normalizer import GeneIndex, build_gene_index
 from taxa import resolve_taxon
-from preprocess import prepare_gene_index, resolve_cache_dir
 from store import read_parquet, write_parquet
 
 type Genes = str | list[str] | pd.DataFrame
 
+_APP_DIR: Final = "alliance_wrapper"
 _GENE_ID: Final = "GeneId"
 _PAGE_SIZE: Final = 500
+
+
+def default_cache_dir() -> Path:
+    base = os.environ.get("XDG_CACHE_HOME")
+    root = Path(base) if base else Path.home() / ".cache"
+    return root / _APP_DIR
+
+
+def resolve_cache_dir(cache_dir: Path | None) -> Path:
+    cache = cache_dir or default_cache_dir()
+    cache.mkdir(parents=True, exist_ok=True)
+    return cache
 
 class Annotator:
     def __init__(
@@ -60,7 +73,7 @@ class Annotator:
         case_insensitive: bool = False,
     ) -> pd.DataFrame:
         index = await self._gene_index()
-        return index.normalize(
+        return index.lookup(
             genes,
             taxon=taxon,
             limit=limit,
@@ -79,7 +92,7 @@ class Annotator:
             client = self._client or await stack.enter_async_context(AGRClient())
             downloader = self._downloader or await stack.enter_async_context(Downloader())
             file = _select_download(await client.list_downloads(), bulk)
-            tmp = self._cache / "bulk" / f"{dataset}.tsv.gz"
+            tmp = dest.with_name(f"{dest.stem}.tsv.gz")
             await downloader.download(file.s3Url, tmp)
             write_parquet(load_tsv_gz(tmp, dtype=str), dest)
             tmp.unlink(missing_ok=True)
@@ -171,9 +184,9 @@ class Annotator:
                 frame, key = await self._load_agr_source(source, gene_ids)
             else:
                 frame, key = self._load_external(source)
+            frame[f'has.{source}'] = True
             out = out.merge(frame, how="left", left_on=_GENE_ID, right_on=key)
-            if key != _GENE_ID:
-                out = out.drop(columns=key)
+            out[f'has.{source}'] = out[f'has.{source}'].fillna(False)
         return out.reset_index(drop=True)
     
     async def get_orthologs(
@@ -199,10 +212,14 @@ class Annotator:
         
 
     async def _gene_index(self) -> GeneIndex:
+        """Lazily build the gene index, caching it for the Annotator's lifetime.
+
+        The `GENE` bulk file is downloaded and converted to `bulk/gene.parquet`
+        like any other dataset; the index is then built from it in memory.
+        """
         if self._index is None:
-            self._index = await prepare_gene_index(
-                self._cache, client=self._client, downloader=self._downloader
-            )
+            path = await self.download(AGRDataset.GENE)
+            self._index = build_gene_index(read_parquet(path))
         return self._index
 
     async def _id_map(
@@ -210,7 +227,7 @@ class Annotator:
     ) -> dict[str, str]:
         index = await self._gene_index()
         unique = list(dict.fromkeys(queries))
-        df = index.normalize(unique, taxon=taxon, limit=1, case_insensitive=case_insensitive)
+        df = index.lookup(unique, taxon=taxon, limit=1, case_insensitive=case_insensitive)
         df = df[df["match_kind"].notna()]
         return dict(zip(df["query"], df[_GENE_ID]))
 
