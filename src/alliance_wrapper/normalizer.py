@@ -18,7 +18,6 @@ import enum
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, NamedTuple
-
 import pandas as pd
 
 from ingest import load_tsv_gz

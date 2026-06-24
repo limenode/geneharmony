@@ -1,6 +1,5 @@
 from datetime import datetime
 from pydantic import BaseModel, PositiveInt
-from typing import Optional, List
 
 class DownloadFile(BaseModel):
     filename: str
