@@ -56,6 +56,7 @@ The `Annotator` is the single entry point. It is async, so call its methods with
 
 ```python
 from annotator import Annotator
+from datasets import AGRDataset
 
 ann = Annotator()
 
@@ -63,7 +64,7 @@ ann = Annotator()
 genes = await ann.normalize(["TP53", "BRCA1"], taxon="human")
 
 # Annotate genes with phenotypic information
-annotated_genes = await ann.normalize(["Atp7b", "Ttn"], AGRDataset.PHENOTYPES, taxon="mouse")
+annotated_genes = await ann.annotate(["Atp7b", "Ttn"], AGRDataset.PHENOTYPES, taxon="mouse")
 ```
 
 ### Resolving genes (`normalize`)
@@ -89,7 +90,7 @@ PRIMARY_ID > SECONDARY_ID > OFFICIAL_SYMBOL > SYNONYM > CROSS_REFERENCE
 
 ### Annotating genes (`annotate`)
 
-`annotate` builds a normalized base frame, then **wide left-joins** one or more sources onto the canonical `GeneId`:
+`annotate` builds a normalized base frame, then **left joins** one or more sources onto the canonical `GeneId`:
 
 ```python
 from datasets import AGRDataset
@@ -116,11 +117,11 @@ pheno = await ann.annotate(list(mouse), AGRDataset.PHENOTYPES, taxon="mouse")
 
 #### Available AGR datasets
 
-| Dataset                  | Backend       | Key columns contributed                                  |
-| ------------------------ | ------------- | -------------------------------------------------------- |
-| `AGRDataset.ORTHOLOGY`   | Bulk TSV      | `Gene2ID`, `Gene2Symbol`, `Gene2SpeciesTaxonID`, …       |
-| `AGRDataset.PHENOTYPES`  | Per-gene API  | `phenotypeStatement`, `references`                       |
-| `AGRDataset.ALLELES`     | Per-gene API  | `allele_id`, `symbol`, `alterationType`, `variantType`, … |
+| Dataset                 | Backend      | Key columns contributed                                     |
+| ----------------------- | ------------ | ----------------------------------------------------------- |
+| `AGRDataset.ORTHOLOGY`  | Bulk TSV     | `Gene2ID`, `Gene2Symbol`, `Gene2SpeciesTaxonID`, …          |
+| `AGRDataset.PHENOTYPES` | Per-gene API | `phenotypeStatement`, `references`                          |
+| `AGRDataset.ALLELES`    | Per-gene API | `allele_id`, `symbol`, `alterationType`, `variantType`, …   |
 
 ### Orthologs convenience helper
 
@@ -165,17 +166,17 @@ df = await ann.annotate(["TP53", "BRCA1"], AGRDataset.ORTHOLOGY, "expression", t
 
 ### Supported species
 
-| Common name              | Species                          | Taxon ID          |
-| ------------------------ | -------------------------------- | ----------------- |
-| human                    | *Homo sapiens*                   | `NCBITaxon:9606`  |
-| mouse                    | *Mus musculus*                   | `NCBITaxon:10090` |
-| rat                      | *Rattus norvegicus*              | `NCBITaxon:10116` |
-| zebrafish                | *Danio rerio*                    | `NCBITaxon:7955`  |
-| fly / fruit fly          | *Drosophila melanogaster*        | `NCBITaxon:7227`  |
-| worm / roundworm         | *Caenorhabditis elegans*         | `NCBITaxon:6239`  |
-| yeast / budding yeast    | *Saccharomyces cerevisiae S288C* | `NCBITaxon:559292`|
-| african clawed frog      | *Xenopus laevis*                 | `NCBITaxon:8355`  |
-| western clawed frog      | *Xenopus tropicalis*             | `NCBITaxon:8364`  |
+| Common name           | Species                          | Taxon ID           |
+| --------------------- | -------------------------------- | ------------------ |
+| human                 | *Homo sapiens*                   | `NCBITaxon:9606`   |
+| mouse                 | *Mus musculus*                   | `NCBITaxon:10090`  |
+| rat                   | *Rattus norvegicus*              | `NCBITaxon:10116`  |
+| zebrafish             | *Danio rerio*                    | `NCBITaxon:7955`   |
+| fly / fruit fly       | *Drosophila melanogaster*        | `NCBITaxon:7227`   |
+| worm / roundworm      | *Caenorhabditis elegans*         | `NCBITaxon:6239`   |
+| yeast / budding yeast | *Saccharomyces cerevisiae S288C* | `NCBITaxon:559292` |
+| african clawed frog   | *Xenopus laevis*                 | `NCBITaxon:8355`   |
+| western clawed frog   | *Xenopus tropicalis*             | `NCBITaxon:8364`   |
 
 Any of the aliases above — common name, full species name, bare number, or `NCBITaxon:` ID — can be passed as `taxon`.
 
@@ -197,7 +198,6 @@ This project is a client for data and services provided by the **Alliance of Gen
 
 If you use data obtained through this wrapper, please cite the Alliance of Genome Resources:
 
-> [Updates to the Alliance of Genome Resources central infrastructure.](https://pubmed.ncbi.nlm.nih.gov/38552170/) 2024. Alliance of Genome Resources Consortium. Genetics. 2024 May 7;227(1):iyae049. doi: 10.1093/genetics/iyae049. PMID: 38552170. 
+> [Updates to the Alliance of Genome Resources central infrastructure.](https://pubmed.ncbi.nlm.nih.gov/38552170/) 2024. Alliance of Genome Resources Consortium. Genetics. 2024 May 7;227(1):iyae049. doi: 10.1093/genetics/iyae049. PMID: 38552170.
 
 Please also consult the [Alliance citation and data-usage guidelines](https://www.alliancegenome.org/cite-us) and acknowledge the underlying model-organism databases (e.g. SGD, WormBase, FlyBase, ZFIN, MGI, RGD, Xenbase) as appropriate.
-
