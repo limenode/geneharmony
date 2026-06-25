@@ -15,7 +15,7 @@ from typing import Any, Final, Self
 import httpx
 from pydantic import TypeAdapter
 
-from models import DownloadFile
+from .models import DownloadFile
 
 AGR_BASE_URL: Final = "https://www.alliancegenome.org/api"
 

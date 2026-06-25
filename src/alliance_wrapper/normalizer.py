@@ -20,8 +20,8 @@ from pathlib import Path
 from typing import Final, NamedTuple
 import pandas as pd
 
-from ingest import load_tsv_gz
-from taxa import resolve_taxon
+from .ingest import load_tsv_gz
+from .taxa import resolve_taxon
 
 type _Tables = dict["MatchKind", dict[str, list[int]]]
 

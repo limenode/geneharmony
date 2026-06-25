@@ -23,14 +23,14 @@ from pathlib import Path
 from typing import Final
 import pandas as pd
 
-from client import AGRClient
-from datasets import DATASETS, AGRDataset, ApiSpec, BulkSpec
-from downloader import Downloader
-from ingest import load_tsv_gz
-from models import DownloadFile
-from normalizer import GeneIndex, build_gene_index
-from taxa import resolve_taxon
-from store import read_parquet, write_parquet
+from .client import AGRClient
+from .datasets import DATASETS, AGRDataset, ApiSpec, BulkSpec
+from .downloader import Downloader
+from .ingest import load_tsv_gz
+from .models import DownloadFile
+from .normalizer import GeneIndex, build_gene_index
+from .taxa import resolve_taxon
+from .store import read_parquet, write_parquet
 
 type Genes = str | list[str] | pd.DataFrame
 

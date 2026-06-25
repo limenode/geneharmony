@@ -18,3 +18,6 @@ httpx = ">=0.28.1,<0.29"
 pyarrow = ">=24.0.0,<25"
 python-dotenv = ">=1.2.2,<2"
 nbconvert = ">=7.17.1,<8"
+
+[pypi-dependencies]
+alliance_wrapper = { path = ".", editable = true }

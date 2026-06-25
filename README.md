@@ -32,13 +32,6 @@ pixi run python <script>
 pixi run jupyter lab src/notebook.ipynb
 ```
 
-> **Note on imports.** Module imports are flat (`from annotator import Annotator`), so code only resolves when `src/` is the working directory or on `sys.path`. The notebook runs from there automatically; standalone scripts should add it:
->
-> ```python
-> import sys
-> sys.path.insert(0, "src")
-> ```
-
 ### Developer setup (optional)
 
 Notebook outputs are stripped from version control via a git clean filter. The filter config is repo-local, so enable it once per clone:
@@ -55,8 +48,7 @@ The `Annotator` is the single entry point. It is async, so call its methods with
 ### Quick start
 
 ```python
-from annotator import Annotator
-from datasets import AGRDataset
+from alliance_wrapper import Annotator, AGRDataset
 
 ann = Annotator()
 
@@ -93,7 +85,7 @@ PRIMARY_ID > SECONDARY_ID > OFFICIAL_SYMBOL > SYNONYM > CROSS_REFERENCE
 `annotate` builds a normalized base frame, then **left joins** one or more sources onto the canonical `GeneId`:
 
 ```python
-from datasets import AGRDataset
+from alliance_wrapper import AGRDataset
 
 orth = await ann.annotate(
     ["TP53", "BRCA1"],

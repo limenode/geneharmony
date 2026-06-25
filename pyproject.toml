@@ -1,0 +1,26 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "alliance_wrapper"
+description = "Async wrapper around the Alliance of Genome Resouces (AGR) API. Allows users to normalize gene identifiers, and annotate gene sets with data from AGR or user-ingested datasets."
+readme = "README.md"
+requires-python = ">=3.14"
+license = "MIT"
+authors = [
+    {name = "Lionel Sequeira", email = "lionelsequeira@gmail.com"} 
+]
+dynamic = ["version"]
+dependencies = [
+    "httpx",
+    "pydantic",
+    "pandas",
+    "pyarrow"
+]
+
+[tool.hatch.version]
+path = "src/alliance_wrapper/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/alliance_wrapper"]
