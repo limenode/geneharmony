@@ -26,10 +26,10 @@ classifiers = [
 ]
 dynamic = ["version"]
 dependencies = [
-    "httpx",
+    "httpx>=0.28",
     "pydantic>=2",
-    "pandas",
-    "pyarrow",
+    "pandas>=3",
+    "pyarrow>=14",
 ]
 
 [project.urls]

@@ -12,14 +12,19 @@ It resolves gene symbols and identifiers to canonical genes using an in-memory i
 - **Transparent caching**: Bulk files, per-gene API results, and ingested annotations are cached as Parquet to expedite repeat runs.
 - **Bring your own data**: Ingest external annotation tables keyed on whatever gene identifier you have; they normalize to canonical AGR genes and join cleanly.
 
-## Requirements
+## Install
 
-- **Python 3.14**
-- Dependencies (managed via [pixi](https://pixi.sh)): `httpx`, `pydantic` v2, `pandas` 3.x, `pyarrow`, `numpy`
+Requires **Python 3.12+**. Install from PyPI with pip or uv — all dependencies (`httpx`, `pydantic` v2, `pandas` 3.x, `pyarrow`) are resolved automatically:
 
-## Setup
+```bash
+pip install geneharmony
+# or
+uv add geneharmony
+```
 
-This project uses **pixi** (conda-forge) for environment management.
+## Development
+
+Contributors use **pixi** (conda-forge) for a reproducible environment from the lockfile. End users do not need pixi.
 
 ```bash
 # 1. Install the environment from the lockfile
@@ -31,8 +36,6 @@ pixi run python <script>
 # 3. Or open the interactive driver notebook
 pixi run jupyter lab src/notebook.ipynb
 ```
-
-### Developer setup (optional)
 
 Notebook outputs are stripped from version control via a git clean filter. The filter config is repo-local, so enable it once per clone:
 

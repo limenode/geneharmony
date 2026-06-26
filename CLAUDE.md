@@ -10,7 +10,7 @@ This replaces an earlier design (kept in `src_old/` for reference) that used an 
 
 ## Environment & commands
 
-Dependencies are managed with [pixi](https://pixi.sh) (conda-forge). There are **no defined tasks, tests, or linters** — `[tasks]` in `pixi.toml` is empty. Python is 3.14; deps include `httpx`, `pydantic` v2, `pandas` 3.x, `pyarrow`.
+The package is **pip-installable** (`pip install geneharmony`); runtime dependencies live in `[project.dependencies]` in `pyproject.toml` (`httpx`, `pydantic` v2, `pandas` 3.x, `pyarrow`) and are the single source of truth for end users. **pixi** (conda-forge) is the **development** environment only — end users don't need it. There are **no defined tasks, tests, or linters** — `[tasks]` in `pixi.toml` is empty. Published floor is Python 3.12+ (`requires-python`); the pixi dev env runs 3.14 (free-threaded).
 
 ```bash
 pixi install                                # create the environment from pixi.lock
