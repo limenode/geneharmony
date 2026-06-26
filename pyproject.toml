@@ -6,18 +6,36 @@ build-backend = "hatchling.build"
 name = "geneharmony"
 description = "Async toolkit to normalize gene identifiers and annotate gene sets with data from the Alliance of Genome Resources (AGR) or user-ingested datasets."
 readme = "README.md"
-requires-python = ">=3.14"
+requires-python = ">=3.12"
 license = "MIT"
+license-files = ["LICENSE"]
 authors = [
-    {name = "Lionel Sequeira", email = "lionelsequeira@gmail.com"} 
+    {name = "Lionel Sequeira", email = "lionelsequeira@gmail.com"}
+]
+keywords = ["genomics", "bioinformatics", "gene", "annotation", "alliance of genome resources", "agr"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+    "Typing :: Typed",
 ]
 dynamic = ["version"]
 dependencies = [
     "httpx",
-    "pydantic",
+    "pydantic>=2",
     "pandas",
-    "pyarrow"
+    "pyarrow",
 ]
+
+[project.urls]
+Homepage = "https://github.com/limenode/geneharmony"
+Repository = "https://github.com/limenode/geneharmony"
+Issues = "https://github.com/limenode/geneharmony/issues"
 
 [tool.hatch.version]
 path = "src/geneharmony/__init__.py"
