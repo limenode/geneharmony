@@ -1,6 +1,6 @@
-# alliance_wrapper
+# geneharmony
 
-An async Python wrapper around the [Alliance of Genome Resources](https://www.alliancegenome.org) (AGR) REST API and bulk-download files, with functionality to append local annotations.
+An async Python toolkit that normalizes gene identifiers and annotates gene sets using the [Alliance of Genome Resources](https://www.alliancegenome.org) (AGR) REST API and bulk-download files, with functionality to append local annotations.
 
 It resolves gene symbols and identifiers to canonical genes using an in-memory index built from AGR's bulk gene file, fetches per-gene API data concurrently, and downloads and parses AGR bulk datasets.
 
@@ -48,7 +48,7 @@ The `Annotator` is the single entry point. It is async, so call its methods with
 ### Quick start
 
 ```python
-from alliance_wrapper import Annotator, AGRDataset
+from geneharmony import Annotator, AGRDataset
 
 ann = Annotator()
 
@@ -85,7 +85,7 @@ PRIMARY_ID > SECONDARY_ID > OFFICIAL_SYMBOL > SYNONYM > CROSS_REFERENCE
 `annotate` builds a normalized base frame, then **left joins** one or more sources onto the canonical `GeneId`:
 
 ```python
-from alliance_wrapper import AGRDataset
+from geneharmony import AGRDataset
 
 orth = await ann.annotate(
     ["TP53", "BRCA1"],
@@ -174,7 +174,7 @@ Any of the aliases above — common name, full species name, bare number, or `NC
 
 ## Caching
 
-Results are cached so repeat work is fast and largely offline. The cache defaults to `$XDG_CACHE_HOME/alliance_wrapper` (falling back to `~/.cache/alliance_wrapper`); pass a `cache_dir` to `Annotator(...)` to share or relocate it.
+Results are cached so repeat work is fast and largely offline. The cache defaults to `$XDG_CACHE_HOME/geneharmony` (falling back to `~/.cache/geneharmony`); pass a `cache_dir` to `Annotator(...)` to share or relocate it.
 
 ```
 bulk/<dataset>.parquet            # downloaded + converted bulk datasets (incl. the gene index source)

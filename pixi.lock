@@ -195,17 +195,6 @@ packages:
   purls: []
   size: 28948
   timestamp: 1770939786096
-- pypi: ./
-  name: alliance-wrapper
-  version: 0.1.0
-  sha256: 84a52a673a20e6875aade36129c3e00d0fc0ed67a695492487a0e78df9b4ff52
-  requires_dist:
-  - httpx
-  - pandas
-  - pyarrow
-  - pydantic
-  requires_python: '>=3.14'
-  editable: true
 - conda: https://conda.anaconda.org/conda-forge/noarch/annotated-types-0.7.0-pyhd8ed1ab_1.conda
   sha256: e0ea1ba78fbb64f17062601edda82097fcf815012cf52bb704150a2668110d48
   md5: 2934f256a8acfe48f6ebb4fce6cde29c
@@ -672,6 +661,17 @@ packages:
   - pkg:pypi/executing?source=hash-mapping
   size: 30753
   timestamp: 1756729456476
+- pypi: ./
+  name: geneharmony
+  version: 0.2.0
+  sha256: 797803713e060f89da820266f48868d21bac8df10821ac12384ea2e289a70830
+  requires_dist:
+  - httpx
+  - pandas
+  - pyarrow
+  - pydantic
+  requires_python: '>=3.14'
+  editable: true
 - conda: https://conda.anaconda.org/conda-forge/linux-64/gflags-2.2.2-h5888daf_1005.conda
   sha256: 6c33bf0c4d8f418546ba9c250db4e4221040936aef8956353bc764d4877bc39a
   md5: d411fc29e338efb48c5fd4576d71d881

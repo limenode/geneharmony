@@ -101,7 +101,7 @@ Each dataset has **one natural backend** so output columns stay predictable: ort
 
 Ties the lower-level pieces together over a resolved cache dir, with a lazily-built `GeneIndex` cached for the instance's lifetime. Intended use is an **iterative filter-then-requery traversal** — one primary AGR dataset per `annotate` call — so cardinality stays under the caller's control (no cross-dataset Cartesian blow-up).
 
-Cache resolution lives here: module-level `default_cache_dir()` is `$XDG_CACHE_HOME/alliance_wrapper` (falling back to `~/.cache/alliance_wrapper`); `resolve_cache_dir(cache_dir)` returns the user's override or that default, creating it (called once in `__init__`). Pass a path to share a cache between users; omit it for the home default.
+Cache resolution lives here: module-level `default_cache_dir()` is `$XDG_CACHE_HOME/geneharmony` (falling back to `~/.cache/geneharmony`); `resolve_cache_dir(cache_dir)` returns the user's override or that default, creating it (called once in `__init__`). Pass a path to share a cache between users; omit it for the home default.
 
 The gene index is built lazily in `_gene_index()` and memoized in `self._index` for the instance's lifetime: it calls `download(AGRDataset.GENE)` (the gene bulk file goes to `bulk/gene.parquet` like any other dataset), then builds the index from that parquet in memory (~2 s; **not** pickled — a pickled `GeneIndex` is ~5× the parquet yet saves only ~0.6 s). The parquet is existence-cached and becomes **stale across AGR releases**; `download(AGRDataset.GENE, refresh=True)` (or deleting it) rebuilds.
 
@@ -131,7 +131,7 @@ Per-gene API fetches paginate (`limit`/`page`, page-1-for-total, remaining pages
 
 ## Cache / scratch
 
-Caches default to `~/.cache/alliance_wrapper` (or `$XDG_CACHE_HOME`); the repo-root `cache/` is the manual override used by the notebook and ad-hoc scratch. Layout written by `Annotator`:
+Caches default to `~/.cache/geneharmony` (or `$XDG_CACHE_HOME`); the repo-root `cache/` is the manual override used by the notebook and ad-hoc scratch. Layout written by `Annotator`:
 
 ```
 bulk/<dataset>.parquet            # downloaded + converted bulk datasets (incl. bulk/gene.parquet, the gene-index source)

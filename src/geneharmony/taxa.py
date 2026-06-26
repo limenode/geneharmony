@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Final, NamedTuple
 from importlib.resources import files
 
-_TAXA_PATH = files("alliance_wrapper").joinpath("taxa.json")
+_TAXA_PATH = files("geneharmony").joinpath("taxa.json")
 
 
 class Taxon(NamedTuple):

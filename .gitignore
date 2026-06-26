@@ -5,6 +5,9 @@
 # pycache
 __pycache__/
 
+# distribution files
+dist/
+
 # vscode settings
 .vscode/
 

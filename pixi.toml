@@ -1,9 +1,9 @@
 [workspace]
 authors = ["Lionel Sequeira <lionelsequeira@gmail.com>"]
 channels = ["conda-forge"]
-name = "alliance_wrapper"
+name = "geneharmony"
 platforms = ["linux-64"]
-version = "0.1.0"
+version = "0.2.0"
 
 [tasks]
 
@@ -20,4 +20,4 @@ python-dotenv = ">=1.2.2,<2"
 nbconvert = ">=7.17.1,<8"
 
 [pypi-dependencies]
-alliance_wrapper = { path = ".", editable = true }
+geneharmony = { path = ".", editable = true }

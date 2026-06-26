@@ -34,7 +34,7 @@ from .store import read_parquet, write_parquet
 
 type Genes = str | list[str] | pd.DataFrame
 
-_APP_DIR: Final = "alliance_wrapper"
+_APP_DIR: Final = "geneharmony"
 _GENE_ID: Final = "GeneId"
 _PAGE_SIZE: Final = 500
 
