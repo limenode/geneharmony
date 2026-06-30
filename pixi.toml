@@ -18,6 +18,7 @@ httpx = ">=0.28.1,<0.29"
 pyarrow = ">=24.0.0,<25"
 python-dotenv = ">=1.2.2,<2"
 nbconvert = ">=7.17.1,<8"
+uv = ">=0.11.25,<0.12"
 
 [pypi-dependencies]
 geneharmony = { path = ".", editable = true }
