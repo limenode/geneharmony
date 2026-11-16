@@ -15,7 +15,7 @@ Gene symbols and identifiers are resolved to canonical AGR genes using an in-mem
 
 ## Installation
 
-Requires Python 3.12+.
+Requires Python 3.11+.
 
 ```bash
 pip install geneharmony

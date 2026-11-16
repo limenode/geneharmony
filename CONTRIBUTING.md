@@ -24,10 +24,13 @@ pixi run python <script>
 
 ## Code style
 
-Code is linted with [ruff](https://docs.astral.sh/ruff/). Please run it before opening a pull request:
+geneharmony supports Python 3.11 and later, and the development environment uses Python 3.11, so code that needs a newer version fails locally.
+
+Code is linted with [ruff](https://docs.astral.sh/ruff/). Before opening a pull request, run the linter and the smoke test:
 
 ```bash
-ruff check src
+ruff check src tests
+pixi run python tests/smoke_test.py
 ```
 
 Use type hints for new code, and keep comments for logic that isn't obvious from the code itself.

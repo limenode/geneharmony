@@ -11,7 +11,7 @@ import time
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
-from typing import Any, Final, Self
+from typing import Any, Final, Self, TypeAlias
 
 import httpx
 from pydantic import TypeAdapter
@@ -20,7 +20,7 @@ from .models import DownloadFile
 
 AGR_BASE_URL: Final = "https://www.alliancegenome.org/api"
 
-type Params = Mapping[str, str | int | bool]
+Params: TypeAlias = Mapping[str, str | int | bool]
 
 _RETRYABLE_STATUS: Final[frozenset[int]] = frozenset({429, 502, 503, 504})
 _DOWNLOADS_ADAPTER: Final = TypeAdapter(list[DownloadFile])

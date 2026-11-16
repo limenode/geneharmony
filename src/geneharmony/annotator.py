@@ -20,7 +20,7 @@ import os
 import re
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any, Final, Self
+from typing import Any, Final, Self, TypeAlias
 
 import pandas as pd
 from platformdirs import user_cache_path
@@ -35,7 +35,7 @@ from .normalizer import GeneIndex, build_gene_index, read_gene_index, save_gene_
 from .store import read_metadata, read_parquet, write_parquet
 from .taxa import resolve_taxon
 
-type Genes = str | list[str] | pd.DataFrame
+Genes: TypeAlias = str | list[str] | pd.DataFrame
 
 _APP_DIR: Final = "geneharmony"
 _CACHE_ENV: Final = "GENEHARMONY_CACHE_DIR"

@@ -16,10 +16,10 @@ but built into a `GeneIndex` rather than joined onto a base frame.
 
 import enum
 from collections.abc import Callable
-from typing import Any, Final, NamedTuple
+from typing import Any, Final, NamedTuple, TypeAlias
 
-type Json = dict[str, Any]
-type Projector = Callable[[str, Json], dict[str, Any]]
+Json: TypeAlias = dict[str, Any]
+Projector: TypeAlias = Callable[[str, Json], dict[str, Any]]
 
 
 class AGRDataset(enum.StrEnum):
