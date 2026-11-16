@@ -12,6 +12,7 @@ import os
 import random
 from pathlib import Path
 from typing import Final, Self
+
 import httpx
 
 _CHUNK_SIZE: Final = 1 << 20

@@ -9,9 +9,8 @@ column of a DataFrame.
 import enum
 import json
 from collections.abc import Callable
-from pathlib import Path
-from typing import Final, NamedTuple
 from importlib.resources import files
+from typing import Final, NamedTuple
 
 _TAXA_PATH = files("geneharmony").joinpath("taxa.json")
 

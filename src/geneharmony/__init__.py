@@ -6,12 +6,12 @@ __version__ = "0.3.0"
 
 from .annotator import Annotator
 from .datasets import AGRDataset
-from .taxa import TaxonField, taxon_mapper, resolve_taxon
+from .taxa import TaxonField, resolve_taxon, taxon_mapper
 
 __all__ = [
-    "Annotator",
     "AGRDataset",
+    "Annotator",
     "TaxonField",
-    "taxon_mapper",
     "resolve_taxon",
+    "taxon_mapper",
 ]

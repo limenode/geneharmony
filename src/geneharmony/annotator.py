@@ -21,6 +21,7 @@ import os
 from contextlib import AsyncExitStack
 from pathlib import Path
 from typing import Final
+
 import pandas as pd
 
 from .client import AGRClient
@@ -29,8 +30,8 @@ from .downloader import Downloader
 from .ingest import load_tsv_gz
 from .models import DownloadFile
 from .normalizer import GeneIndex, build_gene_index
-from .taxa import resolve_taxon
 from .store import read_parquet, write_parquet
+from .taxa import resolve_taxon
 
 type Genes = str | list[str] | pd.DataFrame
 
@@ -187,9 +188,9 @@ class Annotator:
             out = out.merge(frame, how="left", left_on=_GENE_ID, right_on=key)
             out[f'has.{source}'] = out[f'has.{source}'].fillna(False)
         return out.reset_index(drop=True)
-    
+
     async def get_orthologs(
-        self, 
+        self,
         genes: Genes,
         taxon: str | None = None,
         target_taxon: str | None = None,
@@ -206,9 +207,9 @@ class Annotator:
         )
         if target_taxon:
             df = df[df["Gene2SpeciesTaxonID"] == resolve_taxon(target_taxon).id]
-            
+
         return df[["query", "match_kind", "Gene2ID", "Gene2Symbol", "Gene2SpeciesTaxonID"]]
-        
+
 
     async def _gene_index(self) -> GeneIndex:
         """Lazily build the gene index, caching it for the Annotator's lifetime.
