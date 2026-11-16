@@ -17,6 +17,7 @@ import httpx
 
 _CHUNK_SIZE: Final = 1 << 20
 _RETRYABLE_STATUS: Final[frozenset[int]] = frozenset({429, 500, 502, 503, 504})
+_DEFAULT_TIMEOUT: Final = httpx.Timeout(10.0, read=None)
 
 
 class SizeMismatchError(RuntimeError):
@@ -32,7 +33,7 @@ class Downloader:
         self,
         *,
         max_concurrent: int = 3,
-        timeout: httpx.Timeout = httpx.Timeout(10.0, read=None),
+        timeout: httpx.Timeout = _DEFAULT_TIMEOUT,
         max_retries: int = 3,
         backoff_base: float = 0.5,
         backoff_cap: float = 30.0,

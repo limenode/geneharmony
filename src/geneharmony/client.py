@@ -8,7 +8,7 @@ transport errors) with exponential backoff and jitter, honoring `Retry-After`.
 import asyncio
 import random
 from collections.abc import Mapping
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from typing import Any, Final, Self
 
@@ -23,6 +23,7 @@ type Params = Mapping[str, str | int | bool]
 
 _RETRYABLE_STATUS: Final[frozenset[int]] = frozenset({429, 502, 503, 504})
 _DOWNLOADS_ADAPTER: Final = TypeAdapter(list[DownloadFile])
+_DEFAULT_TIMEOUT: Final = httpx.Timeout(10.0, read=120.0)
 
 
 def _parse_retry_after(value: str | None) -> float | None:
@@ -34,7 +35,7 @@ def _parse_retry_after(value: str | None) -> float | None:
         retry_at = parsedate_to_datetime(value)
     except (TypeError, ValueError):
         return None
-    return max(0.0, (retry_at - datetime.now(timezone.utc)).total_seconds())
+    return max(0.0, (retry_at - datetime.now(UTC)).total_seconds())
 
 
 class AGRClient:
@@ -43,7 +44,7 @@ class AGRClient:
         base_url: str = AGR_BASE_URL,
         *,
         max_concurrent: int = 5,
-        timeout: httpx.Timeout = httpx.Timeout(10.0, read=120.0),
+        timeout: httpx.Timeout = _DEFAULT_TIMEOUT,
         max_retries: int = 4,
         backoff_base: float = 0.5,
         backoff_cap: float = 30.0,
