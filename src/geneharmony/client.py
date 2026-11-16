@@ -1,12 +1,13 @@
-"""Async HTTP client for the Alliance of Genome Resources REST API.
+"""HTTP client for the Alliance of Genome Resources REST API.
 
-A single `AGRClient` owns one pooled `httpx.AsyncClient` and bounds in-flight
-requests with a semaphore. GETs retry transient failures (429/5xx, timeouts,
+A single `AGRClient` owns one pooled `httpx.Client` and bounds in-flight
+requests with a semaphore, so one instance can be shared across threads. GETs retry transient failures (429/5xx, timeouts,
 transport errors) with exponential backoff and jitter, honoring `Retry-After`.
 """
 
-import asyncio
 import random
+import threading
+import time
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
@@ -49,31 +50,32 @@ class AGRClient:
         backoff_base: float = 0.5,
         backoff_cap: float = 30.0,
     ) -> None:
-        self._client = httpx.AsyncClient(
+        self._client = httpx.Client(
             base_url=base_url,
             timeout=timeout,
             limits=httpx.Limits(max_connections=max_concurrent),
         )
-        self._sem = asyncio.Semaphore(max_concurrent)
+        self.max_concurrent: Final = max_concurrent
+        self._sem = threading.BoundedSemaphore(max_concurrent)
         self._max_retries = max_retries
         self._backoff_base = backoff_base
         self._backoff_cap = backoff_cap
 
-    async def get_json(self, path: str, params: Params | None = None) -> Any:
-        return (await self._get(path, params)).json()
+    def get_json(self, path: str, params: Params | None = None) -> Any:
+        return self._get(path, params).json()
 
-    async def get_text(self, path: str, params: Params | None = None) -> str:
-        return (await self._get(path, params)).text
+    def get_text(self, path: str, params: Params | None = None) -> str:
+        return self._get(path, params).text
 
-    async def list_downloads(self) -> list[DownloadFile]:
-        return _DOWNLOADS_ADAPTER.validate_python(await self.get_json("/downloads"))
+    def list_downloads(self) -> list[DownloadFile]:
+        return _DOWNLOADS_ADAPTER.validate_python(self.get_json("/downloads"))
 
-    async def _get(self, path: str, params: Params | None) -> httpx.Response:
+    def _get(self, path: str, params: Params | None) -> httpx.Response:
         for attempt in range(self._max_retries + 1):
             last = attempt == self._max_retries
             try:
-                async with self._sem:
-                    response = await self._client.get(path, params=params)
+                with self._sem:
+                    response = self._client.get(path, params=params)
             except (httpx.TransportError, httpx.TimeoutException):
                 if last:
                     raise
@@ -85,17 +87,17 @@ class AGRClient:
                 delay = _parse_retry_after(response.headers.get("Retry-After"))
                 if delay is None:
                     delay = self._backoff(attempt)
-            await asyncio.sleep(delay)
+            time.sleep(delay)
         raise AssertionError("retry loop exited without returning")
 
     def _backoff(self, attempt: int) -> float:
         return random.uniform(0.0, min(self._backoff_cap, self._backoff_base * 2**attempt))
 
-    async def aclose(self) -> None:
-        await self._client.aclose()
+    def close(self) -> None:
+        self._client.close()
 
-    async def __aenter__(self) -> Self:
+    def __enter__(self) -> Self:
         return self
 
-    async def __aexit__(self, *_exc_info: object) -> None:
-        await self.aclose()
+    def __exit__(self, *_exc_info: object) -> None:
+        self.close()

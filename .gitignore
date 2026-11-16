@@ -18,6 +18,7 @@ cache/
 test.txt
 agr_http
 src_old/
+scratch/
 
 # environment variables
 .env

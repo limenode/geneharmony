@@ -6,33 +6,33 @@ intended use is an iterative *filter-then-requery* traversal — one primary AGR
 dataset per `annotate` call — so cardinality stays under the caller's control:
 
     ann = Annotator()
-    orth = await ann.annotate(["TP53", "BRCA1"], AGRDataset.ORTHOLOGY, taxon="human")
+    orth = ann.annotate(["TP53", "BRCA1"], AGRDataset.ORTHOLOGY, taxon="human")
     mouse = orth.loc[orth.Gene2SpeciesTaxonID == "NCBITaxon:10090", "Gene2ID"].unique()
-    pheno = await ann.annotate(list(mouse), AGRDataset.PHENOTYPES, taxon="mouse")
+    pheno = ann.annotate(list(mouse), AGRDataset.PHENOTYPES, taxon="mouse")
 
 `annotate` wide-left-joins each source onto the normalized base frame in order:
 an AGR dataset contributes its native columns; an ingested external annotation
 (referenced by name) contributes columns prefixed with `name.`.
 """
 
-import asyncio
 import math
 import os
 import re
-from contextlib import AsyncExitStack
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Final
+from typing import Any, Final, Self
 
 import pandas as pd
 from platformdirs import user_cache_path
 
+from . import __version__
 from .client import AGRClient
 from .datasets import DATASETS, AGRDataset, ApiSpec, BulkSpec
 from .downloader import Downloader
 from .ingest import load_tsv_gz
 from .models import DownloadFile
-from .normalizer import GeneIndex, build_gene_index
-from .store import read_parquet, write_parquet
+from .normalizer import GeneIndex, build_gene_index, read_gene_index, save_gene_index
+from .store import read_metadata, read_parquet, write_parquet
 from .taxa import resolve_taxon
 
 type Genes = str | list[str] | pd.DataFrame
@@ -40,6 +40,7 @@ type Genes = str | list[str] | pd.DataFrame
 _APP_DIR: Final = "geneharmony"
 _CACHE_ENV: Final = "GENEHARMONY_CACHE_DIR"
 _GENE_ID: Final = "GeneId"
+_GENE_INDEX_FILE: Final = "gene_index.parquet"
 _PAGE_SIZE: Final = 500
 _UNSAFE_FILENAME_CHARS: Final = re.compile(r'[<>:"/\\|?*]')
 
@@ -65,11 +66,29 @@ class Annotator:
         downloader: Downloader | None = None,
     ) -> None:
         self._cache = resolve_cache_dir(cache_dir)
-        self._client = client
-        self._downloader = downloader
+        self._owns_client = client is None
+        self._owns_downloader = downloader is None
+        self._client = client if client is not None else AGRClient()
+        self._downloader = downloader if downloader is not None else Downloader()
         self._index: GeneIndex | None = None
 
-    async def normalize(
+    def close(self) -> None:
+        """Close the HTTP connections this Annotator opened.
+
+        A `client` or `downloader` passed to the constructor is left open.
+        """
+        if self._owns_client:
+            self._client.close()
+        if self._owns_downloader:
+            self._downloader.close()
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *_exc_info: object) -> None:
+        self.close()
+
+    def normalize(
         self,
         genes: str | list[str],
         *,
@@ -77,7 +96,7 @@ class Annotator:
         limit: int | None = 1,
         case_insensitive: bool = False,
     ) -> pd.DataFrame:
-        index = await self._gene_index()
+        index = self._gene_index()
         return index.lookup(
             genes,
             taxon=taxon,
@@ -85,7 +104,7 @@ class Annotator:
             case_insensitive=case_insensitive,
         )
 
-    async def download(self, dataset: AGRDataset, *, refresh: bool = False) -> Path:
+    def download(self, dataset: AGRDataset, *, refresh: bool = False) -> Path:
         """Download a dataset's bulk file, convert TSV -> Parquet, drop the .tsv.gz."""
         bulk = DATASETS[dataset].bulk
         if bulk is None:
@@ -93,17 +112,21 @@ class Annotator:
         dest = self._cache / "bulk" / f"{dataset}.parquet"
         if dest.exists() and not refresh:
             return dest
-        async with AsyncExitStack() as stack:
-            client = self._client or await stack.enter_async_context(AGRClient())
-            downloader = self._downloader or await stack.enter_async_context(Downloader())
-            file = _select_download(await client.list_downloads(), bulk)
-            tmp = dest.with_name(f"{dest.stem}.tsv.gz")
-            await downloader.download(file.s3Url, tmp)
-            write_parquet(load_tsv_gz(tmp, dtype=str), dest)
-            tmp.unlink(missing_ok=True)
+        file = _select_download(self._client.list_downloads(), bulk)
+        tmp = dest.with_name(f"{dest.stem}.tsv.gz")
+        self._downloader.download(file.s3Url, tmp)
+        write_parquet(
+            load_tsv_gz(tmp, dtype=str),
+            dest,
+            metadata={
+                "agr_release": file.releaseVersion,
+                "agr_last_modified": file.lastModified.isoformat(),
+            },
+        )
+        tmp.unlink(missing_ok=True)
         return dest
 
-    async def ingest_annotation(
+    def ingest_annotation(
         self,
         source: str | Path | pd.DataFrame,
         name: str,
@@ -146,7 +169,7 @@ class Annotator:
         if normalize:
             str_cols = df[columns].astype(str)
             values = [v for v in pd.unique(str_cols.values.ravel()) if v != "nan"]
-            mapping = await self._id_map(values, taxon, case_insensitive)
+            mapping = self._id_map(values, taxon, case_insensitive)
             resolved = str_cols.apply(lambda col: col.map(mapping)).bfill(axis=1).iloc[:, 0]
         else:
             resolved = df[columns].bfill(axis=1).iloc[:, 0]
@@ -165,7 +188,7 @@ class Annotator:
         write_parquet(df, dest)
         return _ingest_summary(name, rows_in, len(df), rows_dropped, normalize), unmapped_df
 
-    async def annotate(
+    def annotate(
         self,
         genes: Genes,
         *sources: AGRDataset | str,
@@ -176,7 +199,7 @@ class Annotator:
         if isinstance(genes, pd.DataFrame):
             base = genes.copy()
         else:
-            base = await self.normalize(
+            base = self.normalize(
                 genes, taxon=taxon, limit=limit, case_insensitive=case_insensitive
             )
         if _GENE_ID not in base.columns:
@@ -186,7 +209,7 @@ class Annotator:
         out = base
         for source in sources:
             if isinstance(source, AGRDataset):
-                frame, key = await self._load_agr_source(source, gene_ids)
+                frame, key = self._load_agr_source(source, gene_ids)
             else:
                 frame, key = self._load_external(source)
             frame[f'has.{source}'] = True
@@ -194,7 +217,7 @@ class Annotator:
             out[f'has.{source}'] = out[f'has.{source}'].fillna(False)
         return out.reset_index(drop=True)
 
-    async def get_orthologs(
+    def get_orthologs(
         self,
         genes: Genes,
         taxon: str | None = None,
@@ -203,7 +226,7 @@ class Annotator:
         case_insensitive: bool = False
     ) -> pd.DataFrame:
         """Convenience method to get orthologs for a set of genes."""
-        df = await self.annotate(
+        df = self.annotate(
             genes,
             AGRDataset.ORTHOLOGY,
             taxon=taxon,
@@ -216,68 +239,71 @@ class Annotator:
         return df[["query", "match_kind", "Gene2ID", "Gene2Symbol", "Gene2SpeciesTaxonID"]]
 
 
-    async def _gene_index(self) -> GeneIndex:
-        """Lazily build the gene index, caching it for the Annotator's lifetime.
+    def _gene_index(self) -> GeneIndex:
+        """Load the gene index, caching it for the Annotator's lifetime.
 
-        The `GENE` bulk file is downloaded and converted to `bulk/gene.parquet`
-        like any other dataset; the index is then built from it in memory.
+        The index is built from `bulk/gene.parquet` and saved to
+        `bulk/gene_index.parquet`, stamped with the AGR release of the gene file
+        and the geneharmony version. A saved index is reused only when its stamp
+        matches; otherwise it is rebuilt and saved again.
         """
         if self._index is None:
-            path = await self.download(AGRDataset.GENE)
-            self._index = build_gene_index(read_parquet(path))
+            gene_path = self.download(AGRDataset.GENE)
+            records = read_parquet(gene_path)
+            gene_meta = read_metadata(gene_path)
+            stamp = {
+                "agr_release": gene_meta.get("agr_release", "unknown"),
+                "agr_last_modified": gene_meta.get("agr_last_modified", "unknown"),
+                "geneharmony_version": __version__,
+                "gene_rows": str(len(records)),
+            }
+            index_path = self._cache / "bulk" / _GENE_INDEX_FILE
+            self._index = _read_saved_index(records, index_path, stamp)
+            if self._index is None:
+                self._index = build_gene_index(records)
+                save_gene_index(self._index, index_path, stamp)
         return self._index
 
-    async def _id_map(
+    def _id_map(
         self, queries: list[str], taxon: str | None, case_insensitive: bool = False
     ) -> dict[str, str]:
-        index = await self._gene_index()
+        index = self._gene_index()
         unique = list(dict.fromkeys(queries))
         df = index.lookup(unique, taxon=taxon, limit=1, case_insensitive=case_insensitive)
         df = df[df["match_kind"].notna()]
         return dict(zip(df["query"], df[_GENE_ID]))
 
-    async def _load_agr_source(
+    def _load_agr_source(
         self, dataset: AGRDataset, gene_ids: list[str]
     ) -> tuple[pd.DataFrame, str]:
         spec = DATASETS[dataset]
         if spec.bulk is not None:
             path = self._cache / "bulk" / f"{dataset}.parquet"
             if not path.exists():
-                await self.download(dataset)
+                self.download(dataset)
             frame = read_parquet(path)
             key = spec.bulk.join_key
             return frame[frame[key].isin(set(gene_ids))].reset_index(drop=True), key
         assert spec.api is not None
-        return await self._fetch_api(dataset, spec.api, gene_ids), spec.api.join_key
+        return self._fetch_api(dataset, spec.api, gene_ids), spec.api.join_key
 
-    async def _fetch_api(
+    def _fetch_api(
         self, dataset: AGRDataset, api: ApiSpec, gene_ids: list[str]
     ) -> pd.DataFrame:
         api_dir = self._cache / "api" / dataset
-        cached = [g for g in gene_ids if (api_dir / f"{_safe(g)}.parquet").exists()]
-        missing = [g for g in gene_ids if g not in set(cached)]
+        paths = {g: api_dir / f"{_safe(g)}.parquet" for g in gene_ids}
+        missing = [g for g, path in paths.items() if not path.exists()]
 
-        frames = [read_parquet(api_dir / f"{_safe(g)}.parquet") for g in cached]
-        if missing:
-            async with AsyncExitStack() as stack:
-                client = self._client or await stack.enter_async_context(AGRClient())
-                frames.extend(
-                    await asyncio.gather(
-                        *[self._fetch_one(client, api, g, api_dir) for g in missing]
-                    )
-                )
+        frames = [read_parquet(path) for g, path in paths.items() if g not in set(missing)]
+        endpoints = [api.endpoint.format(gene_id=g) for g in missing]
+        for gene_id, results in zip(missing, _fetch_all_pages(self._client, endpoints)):
+            rows = [api.project(gene_id, r) for r in results]
+            frame = pd.DataFrame(rows) if rows else pd.DataFrame(columns=[api.join_key])
+            write_parquet(frame, paths[gene_id])
+            frames.append(frame)
         if not frames:
             return pd.DataFrame(columns=[api.join_key])
         return pd.concat(frames, ignore_index=True)
-
-    async def _fetch_one(
-        self, client: AGRClient, api: ApiSpec, gene_id: str, api_dir: Path
-    ) -> pd.DataFrame:
-        results = await _fetch_all_pages(client, api.endpoint.format(gene_id=gene_id))
-        rows = [api.project(gene_id, r) for r in results]
-        frame = pd.DataFrame(rows) if rows else pd.DataFrame(columns=[api.join_key])
-        write_parquet(frame, api_dir / f"{_safe(gene_id)}.parquet")
-        return frame
 
     def _load_external(self, name: str) -> tuple[pd.DataFrame, str]:
         path = self._cache / "external" / f"{name}.parquet"
@@ -290,6 +316,17 @@ class Annotator:
             columns={c: f"{name}.{c}" for c in frame.columns if c != _GENE_ID}
         )
         return frame, _GENE_ID
+
+
+def _read_saved_index(
+    records: pd.DataFrame, path: Path, stamp: dict[str, str]
+) -> GeneIndex | None:
+    try:
+        if read_metadata(path) != stamp:
+            return None
+        return read_gene_index(records, path)
+    except (OSError, ValueError):
+        return None
 
 
 def _select_download(files: list[DownloadFile], spec: BulkSpec) -> DownloadFile:
@@ -310,21 +347,34 @@ def _select_download(files: list[DownloadFile], spec: BulkSpec) -> DownloadFile:
     return match
 
 
-async def _fetch_all_pages(
-    client: AGRClient, endpoint: str, page_size: int = _PAGE_SIZE
-) -> list[dict]:
-    first = await client.get_json(endpoint, params={"limit": page_size, "page": 1})
-    results = list(first.get("results", []))
-    pages = math.ceil(first.get("total", len(results)) / page_size)
-    if pages > 1:
-        rest = await asyncio.gather(
-            *[
-                client.get_json(endpoint, params={"limit": page_size, "page": p})
-                for p in range(2, pages + 1)
-            ]
-        )
-        for page in rest:
-            results.extend(page.get("results", []))
+def _fetch_all_pages(
+    client: AGRClient, endpoints: list[str], page_size: int = _PAGE_SIZE
+) -> list[list[dict]]:
+    """Fetch every page of each endpoint, returning one result list per endpoint.
+
+    Runs in two rounds on one thread pool: the first page of every endpoint
+    (which gives each total), then all remaining pages.
+    """
+    if not endpoints:
+        return []
+
+    def get(endpoint: str, page: int) -> Any:
+        return client.get_json(endpoint, params={"limit": page_size, "page": page})
+
+    pool = ThreadPoolExecutor(max_workers=client.max_concurrent)
+    try:
+        firsts = list(pool.map(get, endpoints, [1] * len(endpoints)))
+        results = [list(first.get("results", [])) for first in firsts]
+        rest = [
+            (i, page)
+            for i, first in enumerate(firsts)
+            for page in range(2, math.ceil(first.get("total", len(results[i])) / page_size) + 1)
+        ]
+        pages = pool.map(get, [endpoints[i] for i, _ in rest], [page for _, page in rest])
+        for (i, _), page in zip(rest, pages):
+            results[i].extend(page.get("results", []))
+    finally:
+        pool.shutdown(cancel_futures=True)
     return results
 
 

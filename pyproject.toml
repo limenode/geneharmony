@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "geneharmony"
-description = "Async toolkit to normalize gene identifiers and annotate gene sets with data from the Alliance of Genome Resources (AGR) or user-ingested datasets."
+description = "Toolkit to normalize gene identifiers and annotate gene sets with data from the Alliance of Genome Resources (AGR) or user-ingested datasets."
 readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"

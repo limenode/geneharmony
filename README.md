@@ -1,6 +1,6 @@
 # geneharmony
 
-An async Python toolkit for normalizing gene identifiers and annotating gene sets with data from the [Alliance of Genome Resources](https://www.alliancegenome.org) (AGR) REST API and bulk-download files. 
+A Python toolkit for normalizing gene identifiers and annotating gene sets with data from the [Alliance of Genome Resources](https://www.alliancegenome.org) (AGR) REST API and bulk-download files. 
 You can also join your own annotation tables onto the results.
 
 Gene symbols and identifiers are resolved to canonical AGR genes using an in-memory index built from AGR's bulk gene file. Per-gene API data is fetched concurrently, and bulk datasets are downloaded and parsed.
@@ -25,8 +25,6 @@ uv add geneharmony
 
 ## Usage
 
-The functions of the `Annotator` class are async and must be called with `await`.
-
 ### Quick start
 
 ```python
@@ -35,10 +33,17 @@ from geneharmony import Annotator, AGRDataset
 ann = Annotator()
 
 # Resolve gene symbols to canonical AGR records
-genes = await ann.normalize(["TP53", "BRCA1"], taxon="human")
+genes = ann.normalize(["TP53", "BRCA1"], taxon="human")
 
 # Annotate genes with phenotypes
-annotated_genes = await ann.annotate(["Atp7b", "Ttn"], AGRDataset.PHENOTYPES, taxon="mouse")
+annotated_genes = ann.annotate(["Atp7b", "Ttn"], AGRDataset.PHENOTYPES, taxon="mouse")
+```
+
+An `Annotator` keeps its HTTP connections open between calls. Call `ann.close()` when you are done, or use it in a `with` block:
+
+```python
+with Annotator() as ann:
+    genes = ann.normalize(["TP53", "BRCA1"], taxon="human")
 ```
 
 ### Resolving genes
@@ -46,7 +51,7 @@ annotated_genes = await ann.annotate(["Atp7b", "Ttn"], AGRDataset.PHENOTYPES, ta
 `normalize` takes one identifier or a list of identifiers and returns one row per match. Queries with no match are kept in the output with a null `match_kind`.
 
 ```python
-df = await ann.normalize(
+df = ann.normalize(
     ["TP53", "ENSG00000141510", "not_a_gene"],
     taxon="human",          # "human", "9606", "Homo sapiens", or "NCBITaxon:9606"
     limit=1,                # max matches per query; None returns all matches
@@ -68,13 +73,13 @@ PRIMARY_ID > SECONDARY_ID > OFFICIAL_SYMBOL > SYNONYM > CROSS_REFERENCE
 
 ```python
 # An AGR dataset
-orth = await ann.annotate(["TP53", "BRCA1"], AGRDataset.ORTHOLOGY, taxon="human")
+orth = ann.annotate(["TP53", "BRCA1"], AGRDataset.ORTHOLOGY, taxon="human")
 
 # Several sources in one call
-df = await ann.annotate(["TP53", "BRCA1"], AGRDataset.ORTHOLOGY, "expression", taxon="human")
+df = ann.annotate(["TP53", "BRCA1"], AGRDataset.ORTHOLOGY, "expression", taxon="human")
 
 # Only an ingested annotation
-df = await ann.annotate(["TP53", "BRCA1"], "expression", taxon="human")
+df = ann.annotate(["TP53", "BRCA1"], "expression", taxon="human")
 ```
 
 AGR dataset columns keep their original names, and columns from an ingested table are prefixed with `<name>.`. Each source also adds a boolean `has.<source>` column that marks which rows matched that source.
@@ -85,13 +90,13 @@ Most sources have several rows per gene, so each source you add to a call multip
 
 ```python
 # Find orthologs of human genes
-orth = await ann.annotate(["TP53", "BRCA1"], AGRDataset.ORTHOLOGY, taxon="human")
+orth = ann.annotate(["TP53", "BRCA1"], AGRDataset.ORTHOLOGY, taxon="human")
 
 # Keep the mouse orthologs
 mouse = orth.loc[orth.Gene2SpeciesTaxonID == "NCBITaxon:10090", "Gene2ID"].unique()
 
 # Get the phenotypes of the mouse genes
-pheno = await ann.annotate(list(mouse), AGRDataset.PHENOTYPES, taxon="mouse")
+pheno = ann.annotate(list(mouse), AGRDataset.PHENOTYPES, taxon="mouse")
 ```
 
 #### Available datasets
@@ -107,7 +112,7 @@ pheno = await ann.annotate(list(mouse), AGRDataset.PHENOTYPES, taxon="mouse")
 `get_orthologs` returns a smaller set of ortholog columns:
 
 ```python
-orthologs = await ann.get_orthologs(
+orthologs = ann.get_orthologs(
     ["TP53", "BRCA1"],
     taxon="human",
     target_taxon="mouse",   # optional
@@ -120,10 +125,10 @@ orthologs = await ann.get_orthologs(
 Bulk datasets are downloaded and converted to Parquet the first time they are used. To download one ahead of time:
 
 ```python
-path = await ann.download(AGRDataset.ORTHOLOGY)
+path = ann.download(AGRDataset.ORTHOLOGY)
 
 # Re-download after a new AGR release
-path = await ann.download(AGRDataset.ORTHOLOGY, refresh=True)
+path = ann.download(AGRDataset.ORTHOLOGY, refresh=True)
 ```
 
 ### Adding your own annotations
@@ -131,7 +136,7 @@ path = await ann.download(AGRDataset.ORTHOLOGY, refresh=True)
 `ingest_annotation` takes a CSV, TSV, or Parquet file (or a `DataFrame`), normalizes its gene identifiers, and stores it under a name you can pass to `annotate`.
 
 ```python
-summary, unmapped = await ann.ingest_annotation(
+summary, unmapped = ann.ingest_annotation(
     "my_expression_table.csv",
     name="expression",
     gene_id_column="symbol",   # or a list of columns, tried in order for each row
@@ -139,7 +144,7 @@ summary, unmapped = await ann.ingest_annotation(
 )
 
 # Columns from the ingested table are prefixed with "expression."
-df = await ann.annotate(["TP53", "BRCA1"], AGRDataset.ORTHOLOGY, "expression", taxon="human")
+df = ann.annotate(["TP53", "BRCA1"], AGRDataset.ORTHOLOGY, "expression", taxon="human")
 ```
 
 `summary` contains the number of rows read, stored, and dropped. `unmapped` contains the rows whose identifiers could not be resolved.
@@ -173,12 +178,13 @@ By default, the cache is stored in your operating system's user cache directory:
 To use a different location, pass `cache_dir` to `Annotator` or set the `GENEHARMONY_CACHE_DIR` environment variable. `cache_dir` takes precedence over the environment variable.
 
 ```
-bulk/<dataset>.parquet            # bulk datasets, including the gene index source
+bulk/<dataset>.parquet            # bulk datasets, including the gene file
+bulk/gene_index.parquet           # gene index built from bulk/gene.parquet
 api/<dataset>/<gene_id>.parquet   # per-gene API results
 external/<name>.parquet           # ingested annotations
 ```
 
-The gene index is built from `bulk/gene.parquet`. To update it after a new AGR release, run `await ann.download(AGRDataset.GENE, refresh=True)` or delete the file.
+The gene index is built from `bulk/gene.parquet` and saved to `bulk/gene_index.parquet`. The saved index records the AGR release of the gene file and the geneharmony version it was built with, and is rebuilt automatically when either changes. To update the gene file after a new AGR release, run `ann.download(AGRDataset.GENE, refresh=True)` or delete it.
 
 ## Contributing
 

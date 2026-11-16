@@ -5,16 +5,23 @@ same-directory temp file then `os.replace`, so a reader never sees a half-writte
 file. Object columns holding dicts/lists are JSON-encoded to strings before
 writing (Parquet can't represent them natively); `read_parquet(decode_json=...)`
 reverses that for the columns a caller knows were nested.
+
+Files can carry string key/value metadata in the Parquet footer (e.g. the AGR
+release a bulk file came from), readable without loading the data.
 """
 
 import json
 import os
 import tempfile
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
+
+_METADATA_PREFIX: Final = "geneharmony."
 
 
 def _is_missing(value: Any) -> bool:
@@ -47,10 +54,31 @@ def _atomic_write(path: Path, write_fn: Callable[[Path], None]) -> None:
         raise
 
 
-def write_parquet(df: pd.DataFrame, path: Path) -> None:
+def write_parquet(
+    df: pd.DataFrame, path: Path, *, metadata: Mapping[str, str] | None = None
+) -> None:
+    table = pa.Table.from_pandas(_encode_nested(df), preserve_index=False)
+    write_table(table, path, metadata=metadata)
+
+
+def write_table(
+    table: pa.Table, path: Path, *, metadata: Mapping[str, str] | None = None
+) -> None:
+    if metadata:
+        tagged = {f"{_METADATA_PREFIX}{k}".encode(): v.encode() for k, v in metadata.items()}
+        table = table.replace_schema_metadata({**(table.schema.metadata or {}), **tagged})
     path.parent.mkdir(parents=True, exist_ok=True)
-    encoded = _encode_nested(df)
-    _atomic_write(path, lambda p: encoded.to_parquet(p, compression="zstd", index=False))
+    _atomic_write(path, lambda p: pq.write_table(table, p, compression="zstd"))
+
+
+def read_metadata(path: Path) -> dict[str, str]:
+    """Return the geneharmony metadata stored in a Parquet file's footer."""
+    raw = pq.read_schema(path).metadata or {}
+    return {
+        k.decode().removeprefix(_METADATA_PREFIX): v.decode()
+        for k, v in raw.items()
+        if k.decode().startswith(_METADATA_PREFIX)
+    }
 
 
 def read_parquet(path: Path, *, decode_json: Iterable[str] = ()) -> pd.DataFrame:
