@@ -24,3 +24,5 @@ src_old/
 
 # wheel files
 *.whl
+# local Claude Code instructions
+CLAUDE.md
