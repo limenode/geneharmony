@@ -162,7 +162,15 @@ The `taxon` argument accepts the common name, species name, taxon number, or ful
 
 ## Caching
 
-The cache is stored in `$XDG_CACHE_HOME/geneharmony`, or `~/.cache/geneharmony` if `XDG_CACHE_HOME` is not set. Pass `cache_dir` to `Annotator` to use a different location.
+By default, the cache is stored in your operating system's user cache directory:
+
+| OS      | Location                                                         |
+| ------- | ---------------------------------------------------------------- |
+| Linux   | `~/.cache/geneharmony` (or `$XDG_CACHE_HOME/geneharmony`)        |
+| macOS   | `~/Library/Caches/geneharmony`                                   |
+| Windows | `%LOCALAPPDATA%\geneharmony\Cache`                               |
+
+To use a different location, pass `cache_dir` to `Annotator` or set the `GENEHARMONY_CACHE_DIR` environment variable. `cache_dir` takes precedence over the environment variable.
 
 ```
 bulk/<dataset>.parquet            # bulk datasets, including the gene index source

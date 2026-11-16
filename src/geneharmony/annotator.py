@@ -18,11 +18,13 @@ an AGR dataset contributes its native columns; an ingested external annotation
 import asyncio
 import math
 import os
+import re
 from contextlib import AsyncExitStack
 from pathlib import Path
 from typing import Final
 
 import pandas as pd
+from platformdirs import user_cache_path
 
 from .client import AGRClient
 from .datasets import DATASETS, AGRDataset, ApiSpec, BulkSpec
@@ -36,25 +38,28 @@ from .taxa import resolve_taxon
 type Genes = str | list[str] | pd.DataFrame
 
 _APP_DIR: Final = "geneharmony"
+_CACHE_ENV: Final = "GENEHARMONY_CACHE_DIR"
 _GENE_ID: Final = "GeneId"
 _PAGE_SIZE: Final = 500
+_UNSAFE_FILENAME_CHARS: Final = re.compile(r'[<>:"/\\|?*]')
 
 
 def default_cache_dir() -> Path:
-    base = os.environ.get("XDG_CACHE_HOME")
-    root = Path(base) if base else Path.home() / ".cache"
-    return root / _APP_DIR
+    """Return `$GENEHARMONY_CACHE_DIR` if set, otherwise the OS's user cache directory."""
+    if env := os.environ.get(_CACHE_ENV):
+        return Path(env).expanduser()
+    return user_cache_path(_APP_DIR, appauthor=False)
 
 
-def resolve_cache_dir(cache_dir: Path | None) -> Path:
-    cache = cache_dir or default_cache_dir()
+def resolve_cache_dir(cache_dir: str | os.PathLike[str] | None) -> Path:
+    cache = Path(cache_dir).expanduser() if cache_dir is not None else default_cache_dir()
     cache.mkdir(parents=True, exist_ok=True)
     return cache
 
 class Annotator:
     def __init__(
         self,
-        cache_dir: Path | None = None,
+        cache_dir: str | os.PathLike[str] | None = None,
         *,
         client: AGRClient | None = None,
         downloader: Downloader | None = None,
@@ -324,7 +329,7 @@ async def _fetch_all_pages(
 
 
 def _safe(gene_id: str) -> str:
-    return gene_id.replace(":", "_").replace("/", "_")
+    return _UNSAFE_FILENAME_CHARS.sub("_", gene_id)
 
 
 def _read_table(path: str | Path) -> pd.DataFrame:
