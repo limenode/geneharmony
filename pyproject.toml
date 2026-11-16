@@ -43,6 +43,6 @@ path = "src/geneharmony/__init__.py"
 [tool.hatch.build.targets.wheel]
 packages = ["src/geneharmony"]
 
-[tool.pyright]
-venvPath = ".pixi/envs"
-venv = "default"
+# [tool.pyright]
+# venvPath = ".pixi/envs"
+# venv = "default"
