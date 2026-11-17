@@ -15,11 +15,14 @@ null `match_kind`. Matching is case-sensitive unless `case_insensitive=True`,
 since case can be meaningful across species (human TP53 vs mouse Trp53).
 """
 
+from __future__ import annotations
+
 import enum
-from collections.abc import Mapping
+import math
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Final
+from typing import Final, TypeAlias
 
 import pandas as pd
 import pyarrow as pa
@@ -48,6 +51,46 @@ class MatchKind(enum.IntEnum):
 
 _KIND_NAMES: Final = {kind.value: kind.name for kind in MatchKind}
 
+GeneQuery: TypeAlias = str | Iterable[str | None]
+"""One gene identifier, or any iterable of them (list, tuple, set, Series, Index, ...).
+
+Missing entries (`None`, `NaN`, `pd.NA`) are allowed and skipped.
+"""
+
+
+def _is_missing(value: object) -> bool:
+    return value is None or value is pd.NA or (isinstance(value, float) and math.isnan(value))
+
+
+def as_queries(genes: GeneQuery) -> list[str]:
+    """Return gene identifiers as a list, skipping missing values (`None`, `NaN`).
+
+    Raises `TypeError` for a DataFrame, a non-iterable, or a non-string element.
+    """
+    if isinstance(genes, str):
+        return [genes]
+    if isinstance(genes, pd.DataFrame):
+        raise TypeError(
+            "expected gene identifiers, got a DataFrame; pass a column instead, e.g. "
+            "df['symbol']. Only annotate() accepts a DataFrame, and it must have a "
+            "'GeneId' column."
+        )
+    if isinstance(genes, bytes | bytearray):
+        raise TypeError("gene identifiers must be str, not bytes; decode them first")
+    if not isinstance(genes, Iterable):
+        raise TypeError(
+            f"expected a gene identifier or an iterable of them, got {type(genes).__name__}"
+        )
+    queries: list[str] = []
+    for gene in genes:
+        if isinstance(gene, str):
+            queries.append(gene)
+        elif not _is_missing(gene):
+            raise TypeError(
+                f"gene identifiers must be strings, got {type(gene).__name__}: {gene!r}"
+            )
+    return queries
+
 # (column, kind, pipe-separated?) — the identifier columns of GENE-TSV-COMBINED.
 _KEY_COLUMNS: Final = (
     ("GeneId", MatchKind.PRIMARY_ID, False),
@@ -63,18 +106,17 @@ _KEY_COLUMNS: Final = (
 class GeneIndex:
     records: pd.DataFrame
     _keys: pa.Table
-    _folded: pa.ChunkedArray | None = None
+    _folded: pa.ChunkedArray[pa.StringScalar] | None = None
 
     def lookup(
         self,
-        queries: str | list[str],
+        genes: GeneQuery,
         *,
         taxon: str | None = None,
         limit: int | None = 1,
         case_insensitive: bool = False,
     ) -> pd.DataFrame:
-        if isinstance(queries, str):
-            queries = [queries]
+        queries = as_queries(genes)
         query_keys = pa.array(queries, pa.string())
         keys = self._keys["key"]
         if case_insensitive:
@@ -119,18 +161,18 @@ class GeneIndex:
             .reset_index(drop=True)
         )
 
-    def _folded_keys(self) -> pa.ChunkedArray:
+    def _folded_keys(self) -> pa.ChunkedArray[pa.StringScalar]:
         if self._folded is None:
             self._folded = pc.utf8_lower(self._keys["key"])
         return self._folded
 
 
-def _key_part(values: pa.Array, kind: MatchKind, pipe_separated: bool) -> pa.Table:
+def _key_part(values: pa.Array[pa.StringScalar], kind: MatchKind, pipe_separated: bool) -> pa.Table:
     if pipe_separated:
         lists = pc.split_pattern(values, "|")
         keys = pc.list_flatten(lists)
         rows = pc.list_parent_indices(lists)
-        keep = pc.not_equal(keys, "")
+        keep = pc.not_equal(keys, pa.scalar(""))
         if kind is MatchKind.CROSS_REFERENCE:
             prefixes = pc.list_element(pc.split_pattern(keys, ":", max_splits=1), 0)
             excluded = pc.is_in(prefixes, value_set=pa.array(sorted(_XREF_EXCLUDED_PREFIXES)))

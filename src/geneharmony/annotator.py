@@ -20,22 +20,29 @@ import os
 import re
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any, Final, Self, TypeAlias
+from typing import Any, Final, Self, TypeAlias, overload
 
 import pandas as pd
 from platformdirs import user_cache_path
 
-from . import __version__
+from ._version import __version__
 from .client import AGRClient
-from .datasets import DATASETS, AGRDataset, ApiSpec, BulkSpec
+from .datasets import DATASETS, AGRDataset, ApiSpec, BulkSpec, Json
 from .downloader import Downloader
 from .ingest import load_tsv_gz
 from .models import DownloadFile
-from .normalizer import GeneIndex, build_gene_index, read_gene_index, save_gene_index
+from .normalizer import (
+    GeneIndex,
+    GeneQuery,
+    as_queries,
+    build_gene_index,
+    read_gene_index,
+    save_gene_index,
+)
 from .store import read_metadata, read_parquet, write_parquet
 from .taxa import resolve_taxon
 
-Genes: TypeAlias = str | list[str] | pd.DataFrame
+IngestSummary: TypeAlias = dict[str, str | int | bool | None]
 
 _APP_DIR: Final = "geneharmony"
 _CACHE_ENV: Final = "GENEHARMONY_CACHE_DIR"
@@ -90,15 +97,22 @@ class Annotator:
 
     def normalize(
         self,
-        genes: str | list[str],
+        genes: GeneQuery,
         *,
         taxon: str | None = None,
         limit: int | None = 1,
         case_insensitive: bool = False,
     ) -> pd.DataFrame:
+        """Resolve gene identifiers to AGR gene records, one row per match.
+
+        `genes` is one identifier or any iterable of them (list, tuple, set,
+        Series, Index, ...). Missing values are skipped. Queries with no match
+        are kept, with a null `match_kind`.
+        """
+        queries = as_queries(genes)
         index = self._gene_index()
         return index.lookup(
-            genes,
+            queries,
             taxon=taxon,
             limit=limit,
             case_insensitive=case_insensitive,
@@ -136,7 +150,7 @@ class Annotator:
         taxon: str | None = None,
         case_insensitive: bool = False,
         override: bool = False,
-    ) -> tuple[dict, pd.DataFrame | None]:
+    ) -> tuple[IngestSummary, pd.DataFrame | None]:
         """Store an external annotation table, keyed by canonical `GeneId`.
 
         `gene_id_column` may name several columns; they are tried left-to-right
@@ -188,22 +202,44 @@ class Annotator:
         write_parquet(df, dest)
         return _ingest_summary(name, rows_in, len(df), rows_dropped, normalize), unmapped_df
 
+    @overload
     def annotate(
         self,
-        genes: Genes,
+        genes: GeneQuery,
+        /,
+        *sources: AGRDataset | str,
+        taxon: str | None = None,
+        limit: int | None = 1,
+        case_insensitive: bool = False,
+    ) -> pd.DataFrame: ...
+
+    @overload
+    def annotate(self, genes: pd.DataFrame, /, *sources: AGRDataset | str) -> pd.DataFrame: ...
+
+    def annotate(
+        self,
+        genes: GeneQuery | pd.DataFrame,
+        /,
         *sources: AGRDataset | str,
         taxon: str | None = None,
         limit: int | None = 1,
         case_insensitive: bool = False,
     ) -> pd.DataFrame:
+        """Left-join each source onto the genes' canonical `GeneId`, in order.
+
+        `genes` is either:
+
+        - gene identifiers (one, or any iterable of them), which are first
+          resolved with `normalize(genes, taxon=..., limit=..., case_insensitive=...)`; or
+        - a DataFrame from an earlier `normalize` or `annotate` call, used as-is.
+          It must have a `GeneId` column, and the normalization options do not apply.
+        """
         if isinstance(genes, pd.DataFrame):
-            base = genes.copy()
+            base = _require_gene_ids(genes)
         else:
             base = self.normalize(
                 genes, taxon=taxon, limit=limit, case_insensitive=case_insensitive
             )
-        if _GENE_ID not in base.columns:
-            raise KeyError(f"base frame has no {_GENE_ID!r} column to join on")
 
         gene_ids = base[_GENE_ID].dropna().unique().tolist()
         out = base
@@ -219,20 +255,23 @@ class Annotator:
 
     def get_orthologs(
         self,
-        genes: Genes,
+        genes: GeneQuery | pd.DataFrame,
         taxon: str | None = None,
         target_taxon: str | None = None,
         limit: int | None = 1,
         case_insensitive: bool = False
     ) -> pd.DataFrame:
-        """Convenience method to get orthologs for a set of genes."""
-        df = self.annotate(
-            genes,
-            AGRDataset.ORTHOLOGY,
-            taxon=taxon,
-            limit=limit,
-            case_insensitive=case_insensitive,
-        )
+        """Get orthologs for a set of genes, optionally limited to `target_taxon`.
+
+        `genes` takes the same two forms as in `annotate`.
+        """
+        if isinstance(genes, pd.DataFrame):
+            base = _require_gene_ids(genes)
+        else:
+            base = self.normalize(
+                genes, taxon=taxon, limit=limit, case_insensitive=case_insensitive
+            )
+        df = self.annotate(base, AGRDataset.ORTHOLOGY)
         if target_taxon:
             df = df[df["Gene2SpeciesTaxonID"] == resolve_taxon(target_taxon).id]
 
@@ -318,6 +357,15 @@ class Annotator:
         return frame, _GENE_ID
 
 
+def _require_gene_ids(frame: pd.DataFrame) -> pd.DataFrame:
+    if _GENE_ID not in frame.columns:
+        raise KeyError(
+            f"DataFrame has no {_GENE_ID!r} column to join on; pass a DataFrame from "
+            "normalize() or annotate(), or pass the gene identifiers themselves"
+        )
+    return frame.copy()
+
+
 def _read_saved_index(
     records: pd.DataFrame, path: Path, stamp: dict[str, str]
 ) -> GeneIndex | None:
@@ -349,7 +397,7 @@ def _select_download(files: list[DownloadFile], spec: BulkSpec) -> DownloadFile:
 
 def _fetch_all_pages(
     client: AGRClient, endpoints: list[str], page_size: int = _PAGE_SIZE
-) -> list[list[dict]]:
+) -> list[list[Json]]:
     """Fetch every page of each endpoint, returning one result list per endpoint.
 
     Runs in two rounds on one thread pool: the first page of every endpoint
@@ -402,7 +450,7 @@ def _ingest_summary(
     rows_stored: int | None,
     rows_dropped: int | None,
     normalized: bool | None,
-) -> dict:
+) -> IngestSummary:
     return {
         "annotation_name": name,
         "rows_in": rows_in,

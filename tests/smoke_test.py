@@ -9,7 +9,12 @@ from pathlib import Path
 import pandas as pd
 
 from geneharmony import AGRDataset, Annotator, TaxonField, resolve_taxon, taxon_mapper
-from geneharmony.normalizer import build_gene_index, read_gene_index, save_gene_index
+from geneharmony.normalizer import (
+    as_queries,
+    build_gene_index,
+    read_gene_index,
+    save_gene_index,
+)
 from geneharmony.store import read_metadata, read_parquet, write_parquet
 
 RECORDS = pd.DataFrame(
@@ -30,6 +35,18 @@ def main() -> None:
     assert resolve_taxon("mouse").id == "NCBITaxon:10090"
     assert taxon_mapper(TaxonField.COMMON_NAME)("NCBITaxon:9606") == "human"
     assert f"{AGRDataset.PHENOTYPES}.parquet" == "phenotypes.parquet"
+
+    assert as_queries("TP53") == ["TP53"]
+    assert as_queries(pd.Series(["TP53", None, "BRCA1"], dtype="str")) == ["TP53", "BRCA1"]
+    assert as_queries(g for g in ("TP53", None)) == ["TP53"]
+    assert as_queries(pd.DataFrame({"g": ["TP53", None]})["g"]) == ["TP53"]  # None -> NaN
+    for bad in (pd.DataFrame({"g": ["TP53"]}), 7157, ["TP53", 7157], b"TP53"):
+        try:
+            as_queries(bad)  # pyright: ignore[reportArgumentType]
+        except TypeError:
+            pass
+        else:
+            raise AssertionError(f"as_queries accepted {bad!r}")
 
     index = build_gene_index(RECORDS)
     df = index.lookup(["TP53", "p53", "NCBI_Gene:22059", "PANTHER:PTHR11447", "nope"])
@@ -53,7 +70,10 @@ def main() -> None:
 
         with Annotator(cache) as ann:
             ann._index = index
-            assert ann.normalize("BRCA1")["GeneId"].iloc[0] == "HGNC:1100"
+            assert ann.normalize(pd.Index(["BRCA1"]))["GeneId"].iloc[0] == "HGNC:1100"
+            base = ann.normalize(["TP53", "BRCA1"])
+            assert ann.annotate(base).equals(base)
+            assert ann.annotate(("TP53", "BRCA1")).equals(base)
 
     print("smoke test passed")
 
