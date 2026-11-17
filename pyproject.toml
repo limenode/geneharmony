@@ -40,11 +40,12 @@ Repository = "https://github.com/limenode/geneharmony"
 Issues = "https://github.com/limenode/geneharmony/issues"
 
 [tool.hatch.version]
-path = "src/geneharmony/__init__.py"
+path = "src/geneharmony/_version.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/geneharmony"]
 
-# [tool.pyright]
-# venvPath = ".pixi/envs"
-# venv = "default"
+[tool.basedpyright]
+venvPath = ".pixi/envs"
+venv = "default"
+typeCheckingMode = "standard"

@@ -48,7 +48,7 @@ with Annotator() as ann:
 
 ### Resolving genes
 
-`normalize` takes one identifier or a list of identifiers and returns one row per match. Queries with no match are kept in the output with a null `match_kind`.
+`normalize` takes one identifier or any iterable of identifiers, such as a list, tuple, set, pandas `Series` or `Index`, or NumPy array. It returns one row per match. Missing values (`None`, `NaN`) are skipped, and queries with no match are kept in the output with a null `match_kind`.
 
 ```python
 df = ann.normalize(
@@ -84,7 +84,13 @@ df = ann.annotate(["TP53", "BRCA1"], "expression", taxon="human")
 
 AGR dataset columns keep their original names, and columns from an ingested table are prefixed with `<name>.`. Each source also adds a boolean `has.<source>` column that marks which rows matched that source.
 
-You can also pass a DataFrame with a `GeneId` column, such as the output of `normalize`, instead of a list of genes.
+`genes` can be anything `normalize` accepts, which `annotate` resolves first. It can also be a DataFrame returned by an earlier `normalize` or `annotate` call, which is used as-is: it must have a `GeneId` column, and `taxon`, `limit`, and `case_insensitive` are not used.
+
+```python
+genes = ann.normalize(df["symbol"], taxon="human")   # a column of your own table
+resolved = genes[genes.match_kind.notna()]
+orth = ann.annotate(resolved, AGRDataset.ORTHOLOGY)
+```
 
 Most sources have several rows per gene, so each source you add to a call multiplies the number of rows. To keep the output small, filter the result of one call and pass the genes you want to the next:
 
